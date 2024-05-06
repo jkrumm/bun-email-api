@@ -2,10 +2,31 @@
   "name": "bun-email-api",
   "module": "index.ts",
   "type": "module",
+  "lint-staged": {
+    "**/*": "prettier --write --ignore-unknown"
+  },
+  "scripts": {
+    "start": "bun run index.ts",
+    "dev": "bun --watch index.ts",
+    "email": "email dev --dir emails",
+    "format": "prettier --write .",
+    "prepare": "husky"
+  },
   "devDependencies": {
-    "bun-types": "latest"
+    "bun-types": "latest",
+    "husky": "^9.0.11",
+    "lint-staged": "^15.2.2",
+    "prettier": "3.2.5"
   },
   "peerDependencies": {
     "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@react-email/components": "^0.0.17",
+    "@react-email/html": "^0.0.8",
+    "@react-email/render": "^0.0.13",
+    "nodemailer": "^6.9.13",
+    "react": "^18.3.1",
+    "react-email": "^2.1.2"
   }
 }
