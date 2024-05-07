@@ -22,7 +22,6 @@ const app = new Elysia()
   .use(bearer())
   .use(
     env({
-      PORT: t.String({ default: "3000" }),
       BEA_SECRET_KEY: t.String({
         minLength: 10,
         error: "BEA_SECRET_KEY is required for a service!",
@@ -102,8 +101,8 @@ const app = new Elysia()
       },
     },
   )
-  .listen(process.env.PORT ?? 3000);
+  .listen(3010);
 
 console.log(
-  `🦊 Elysia is running at ${app.server?.hostname}:${app.server?.port}`,
+  `🦊 Elysia is running at ${app.server?.hostname}:${app.server?.port} with NODE_ENV=${process.env.NODE_ENV} 🦊`,
 );
