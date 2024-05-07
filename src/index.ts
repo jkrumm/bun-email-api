@@ -3,8 +3,9 @@ import { env } from "@yolk-oss/elysia-env";
 import { bearer } from "@elysiajs/bearer";
 import { render } from "@react-email/render";
 import FppReceiverMail from "./emails/fpp/fpp-receiver-mail";
-import nodemailer from "nodemailer";
 import FppSenderMail from "./emails/fpp/fpp-sender-mail";
+import nodemailer from "nodemailer";
+import Mail from "nodemailer/lib/mailer";
 
 const transporter = nodemailer.createTransport({
   service: "gmail",
@@ -45,8 +46,9 @@ const app = new Elysia()
     ({ body, env, set }) => {
       const senderHtml = render(FppSenderMail(body));
 
-      const senderMailOptions = {
-        from: process.env.GMAIL_USER,
+      const senderMailOptions: Mail.Options = {
+        from: `Free-Planning-Poker.com <${process.env.GMAIL_USER}>`,
+        sender: `Free-Planning-Poker.com <${process.env.GMAIL_USER}>`,
         to: body.email,
         subject: "Free-Planning-Poker.com - Contact Form Submission",
         html: senderHtml,
@@ -62,8 +64,10 @@ const app = new Elysia()
 
       const receiverHtml = render(FppReceiverMail(body));
 
-      const receiverMailOptions = {
-        from: body.email,
+      const receiverMailOptions: Mail.Options = {
+        from: `Free-Planning-Poker.com <${body.email}>`,
+        sender: `Free-Planning-Poker.com <${body.email}>`,
+        replyTo: `Free-Planning-Poker.com <${body.email}>`,
         to: env.BEA_RECEIVER_EMAIL,
         subject: "Free-Planning-Poker.com - Contact Form Submission",
         html: receiverHtml,
