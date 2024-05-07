@@ -1,0 +1,3 @@
+setup:
+  - project: bun-email-api
+    config: dev

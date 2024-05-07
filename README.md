@@ -1,8 +1,8 @@
 # bun-email-api
 
 TODOs: 
-- [ ] setup Doppler secrets
-- [ ] create a new jkrumm-noreply@gmail.com email account for sending emails
+- [x] setup Doppler secrets
+- [x] create a new jkrumm-noreply@gmail.com email account for sending emails
 - [ ] send emails with gmail https://blog.logrocket.com/streamline-email-creation-react-email/
 - [ ] validate the incoming payload
 - [ ] protect the api with a token

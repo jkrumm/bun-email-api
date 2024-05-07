@@ -1,18 +1,19 @@
 {
   "name": "bun-email-api",
-  "module": "index.ts",
+  "module": "src/index.js",
   "type": "module",
   "lint-staged": {
     "**/*": "prettier --write --ignore-unknown"
   },
   "scripts": {
-    "start": "bun run index.ts",
-    "dev": "bun --watch index.ts",
-    "email": "email dev --dir emails",
+    "start": "doppler run -- bun run src/index.ts",
+    "dev": "doppler run -- bun run --watch src/index.ts",
+    "email": "email dev --dir src/emails",
     "format": "prettier --write .",
     "prepare": "husky"
   },
   "devDependencies": {
+    "@types/nodemailer": "^6.4.15",
     "bun-types": "latest",
     "husky": "^9.0.11",
     "lint-staged": "^15.2.2",
@@ -22,9 +23,13 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "@elysiajs/bearer": "^1.0.2",
     "@react-email/components": "^0.0.17",
     "@react-email/html": "^0.0.8",
     "@react-email/render": "^0.0.13",
+    "@yolk-oss/elysia-env": "^1.0.2",
+    "elysia": "latest",
+    "elysia-helmet": "^1.0.2",
     "nodemailer": "^6.9.13",
     "react": "^18.3.1",
     "react-email": "^2.1.2"
