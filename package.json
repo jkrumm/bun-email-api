@@ -29,7 +29,6 @@
     "@react-email/render": "^0.0.13",
     "@yolk-oss/elysia-env": "^1.0.2",
     "elysia": "latest",
-    "elysia-helmet": "^1.0.2",
     "nodemailer": "^6.9.13",
     "react": "^18.3.1",
     "react-email": "^2.1.2"

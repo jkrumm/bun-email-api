@@ -1,20 +1,37 @@
 import { Elysia, t } from "elysia";
 import { env } from "@yolk-oss/elysia-env";
-import { helmet } from "elysia-helmet";
 import { bearer } from "@elysiajs/bearer";
+import { render } from "@react-email/render";
+import FppReceiverMail from "./emails/fpp/fpp-receiver-mail";
+import nodemailer from "nodemailer";
+import FppSenderMail from "./emails/fpp/fpp-sender-mail";
+
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.BEA_GMAIL_EMAIL,
+    pass: process.env.BEA_GMAIL_APP_PASSWORD,
+  },
+  tls: {
+    rejectUnauthorized: false,
+  },
+});
 
 const app = new Elysia()
   .use(bearer())
-  .use(helmet())
   .use(
     env({
       BEA_SECRET_KEY: t.String({
         minLength: 10,
         error: "BEA_SECRET_KEY is required for a service!",
       }),
-      BEA_GMAIL_APP_NAME: t.String({
-        minLength: 1,
-        error: "BEA_GMAIL_APP_NAME is required for a service!",
+      BEA_GMAIL_EMAIL: t.String({
+        format: "email",
+        error: "BEA_GMAIL_EMAIL is required for a service!",
+      }),
+      BEA_RECEIVER_EMAIL: t.String({
+        format: "email",
+        error: "BEA_RECEIVER_EMAIL is required for a service!",
       }),
       BEA_GMAIL_APP_PASSWORD: t.String({
         minLength: 1,
@@ -25,17 +42,57 @@ const app = new Elysia()
   .get("/", () => "Hello Elysia")
   .post(
     "/fpp",
-    ({ bearer }) => {
-      return bearer;
+    ({ body, env, set }) => {
+      const senderHtml = render(FppSenderMail(body));
+
+      const senderMailOptions = {
+        from: process.env.GMAIL_USER,
+        to: body.email,
+        subject: "Free-Planning-Poker.com - Contact Form Submission",
+        html: senderHtml,
+      };
+
+      transporter.sendMail(senderMailOptions, (error, info) => {
+        if (error) {
+          console.error(error);
+          set.status = 500;
+          return { message: "Error: Could not send email" };
+        }
+      });
+
+      const receiverHtml = render(FppReceiverMail(body));
+
+      const receiverMailOptions = {
+        from: body.email,
+        to: env.BEA_RECEIVER_EMAIL,
+        subject: "Free-Planning-Poker.com - Contact Form Submission",
+        html: receiverHtml,
+      };
+
+      transporter.sendMail(receiverMailOptions, (error, info) => {
+        if (error) {
+          console.error(error);
+          set.status = 500;
+          return { message: "Error: Could not send email" };
+        }
+      });
+
+      console.log("Email sent successfully");
+      return { message: "Email sent successfully" };
     },
     {
-      beforeHandle({ bearer, set }) {
-        if (!bearer) {
+      body: t.Object({
+        name: t.Nullable(t.String()),
+        email: t.String({ format: "email" }),
+        subject: t.Nullable(t.String()),
+        message: t.Nullable(t.String()),
+      }),
+      beforeHandle({ env, bearer, set }) {
+        if (bearer !== env.BEA_SECRET_KEY) {
           set.status = 400;
           set.headers["WWW-Authenticate"] =
             `Bearer realm='sign', error="invalid_request"`;
-
-          return "Unauthorized";
+          return { message: "Unauthorized" };
         }
       },
     },

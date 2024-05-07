@@ -8,19 +8,19 @@ import {
 } from "@react-email/components";
 import * as React from "react";
 
-export interface FppCReceiverMailProps {
-  name: string;
+export interface FppReceiverProps {
+  name: string | null;
   email: string;
-  subject: string;
-  message: string;
+  subject: string | null;
+  message: string | null;
 }
 
-export default function FppCReceiverMailProps({
+export default function FppReceiverMail({
   name = "John Doe",
   email = "john.doe@gmail.com",
   subject = "Hello World!",
   message = "Hello, I am interested in your product",
-}: FppCReceiverMailProps) {
+}: FppReceiverProps) {
   return (
     <Html style={{ fontFamily: "sans-serif" }}>
       <Container>
@@ -30,20 +30,11 @@ export default function FppCReceiverMailProps({
             marginBottom: 40,
           }}
         >
-          <Img
-            src="https://free-planning-poker.com/logo.svg"
-            alt="Logo"
-            width="90"
-            height="90"
-            style={{
-              marginLeft: "auto",
-              marginRight: "auto",
-            }}
-          />
           <Heading
             as="h1"
             style={{
               textAlign: "center",
+              fontWeight: "bold",
               color: "#1971C2",
             }}
           >
@@ -52,7 +43,7 @@ export default function FppCReceiverMailProps({
         </Section>
         <Section>
           <Heading as="h2">New form submission! 🎉</Heading>
-          <Text>We have received a contact form submission</Text>
+          <Text>We have received a contact form submission.</Text>
         </Section>
         <Section
           style={{

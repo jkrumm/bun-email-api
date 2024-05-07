@@ -2,10 +2,10 @@
 
 TODOs: 
 - [x] setup Doppler secrets
-- [x] create a new jkrumm-noreply@gmail.com email account for sending emails
-- [ ] send emails with gmail https://blog.logrocket.com/streamline-email-creation-react-email/
-- [ ] validate the incoming payload
-- [ ] protect the api with a token
+- [x] create a new jkrumm.noreply@gmail.com email account for sending emails
+- [x] send emails with gmail https://blog.logrocket.com/streamline-email-creation-react-email/
+- [x] validate the incoming payload
+- [x] protect the api with a token
 - [ ] containerize the app https://bun.sh/guides/ecosystem/docker (don't forget to include all email templates)
 
 Nice to have:
