@@ -6,17 +6,7 @@ import FppReceiverMail from "./emails/fpp/fpp-receiver-mail";
 import FppSenderMail from "./emails/fpp/fpp-sender-mail";
 import nodemailer from "nodemailer";
 import Mail from "nodemailer/lib/mailer";
-
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.BEA_GMAIL_EMAIL,
-    pass: process.env.BEA_GMAIL_APP_PASSWORD,
-  },
-  tls: {
-    rejectUnauthorized: false,
-  },
-});
+import { wrappedBulkSendMail, wrappedSendMail } from "./utils/send-mail";
 
 const app = new Elysia()
   .use(bearer())
@@ -43,7 +33,7 @@ const app = new Elysia()
   .get("/", () => "Hello Elysia")
   .post(
     "/fpp",
-    ({ body, env, set }) => {
+    async ({ body, env, set }) => {
       const senderHtml = render(FppSenderMail(body));
 
       const senderMailOptions: Mail.Options = {
@@ -53,14 +43,6 @@ const app = new Elysia()
         subject: "Free-Planning-Poker.com - Contact Form Submission",
         html: senderHtml,
       };
-
-      transporter.sendMail(senderMailOptions, (error, info) => {
-        if (error) {
-          console.error(error);
-          set.status = 500;
-          return { message: "Error: Could not send email" };
-        }
-      });
 
       const receiverHtml = render(FppReceiverMail(body));
 
@@ -73,16 +55,16 @@ const app = new Elysia()
         html: receiverHtml,
       };
 
-      transporter.sendMail(receiverMailOptions, (error, info) => {
-        if (error) {
-          console.error(error);
+      await wrappedBulkSendMail([senderMailOptions, receiverMailOptions]).catch(
+        (e) => {
+          console.error(e);
           set.status = 500;
-          return { message: "Error: Could not send email" };
-        }
-      });
+          return { message: "Error: Could not send emails" };
+        },
+      );
 
-      console.log("Email sent successfully");
-      return { message: "Email sent successfully" };
+      console.log("Emails sent successfully");
+      return { message: "Emails sent successfully" };
     },
     {
       body: t.Object({
