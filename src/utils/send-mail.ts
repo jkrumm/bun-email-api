@@ -1,40 +1,51 @@
-import nodemailer from "nodemailer";
-import Mail from "nodemailer/lib/mailer";
+import { Resend } from "resend";
 
-export async function wrappedBulkSendMail(mailOptions: Mail.Options[]) {
-  await Promise.all(
-    mailOptions.map((mailOption) => wrappedSendMail(mailOption)),
-  );
-}
+const resend = new Resend(process.env.BEA_RESEND_API_KEY);
 
-export async function wrappedSendMail(mailOptions: Mail.Options) {
-  return new Promise((resolve, reject) => {
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.BEA_GMAIL_EMAIL,
-        pass: process.env.BEA_GMAIL_APP_PASSWORD,
-      },
-      tls: {
-        rejectUnauthorized: false,
-      },
+export async function sendMail({
+  from,
+  to,
+  replyTo,
+  subject,
+  template,
+}: {
+  from?: string;
+  to: string;
+  replyTo?: string;
+  subject: string;
+  template: JSX.Element;
+}): Promise<void> {
+  if (!from) {
+    from = "Free-Planning-Poker.com <no-reply@free-planning-poker.com>";
+  }
+
+  const email = await resend.emails.send({
+    from,
+    to,
+    reply_to: replyTo ? replyTo : undefined,
+    subject,
+    react: template,
+  });
+
+  if (email.error) {
+    console.error("Email sent failed", {
+      response: email,
+      to,
+      from,
+      replyTo,
+      subject,
     });
+    throw new Error(
+      // @ts-ignore
+      `${email.error["statusCode"] || ""} - ${email.error.name} - ${email.error.message}`,
+    );
+  }
 
-    transporter.verify(function (error, success) {
-      if (error) {
-        reject(error);
-      }
-      if (!success) {
-        reject(new Error("Failed to verify connection"));
-      }
-    });
-
-    transporter.sendMail(mailOptions, function (error, info) {
-      if (error) {
-        reject(error);
-      } else {
-        resolve(info);
-      }
-    });
+  console.log("Email sent successfully", {
+    response: email,
+    to,
+    from,
+    replyTo,
+    subject,
   });
 }
