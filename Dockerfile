@@ -27,5 +27,8 @@ ENV NODE_ENV production
 # Make port 3010 available to the world outside this container
 EXPOSE 3010
 
+# Verify that the index.ts file exists
+RUN if [ ! -f ./src/index.ts ]; then echo "Error: src/index.ts not found!"; exit 1; fi
+
 # Run the app
 CMD ["bun", "run", "src/index.ts"]
