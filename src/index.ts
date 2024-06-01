@@ -4,6 +4,7 @@ import { bearer } from "@elysiajs/bearer";
 import FppReceiverMail from "./emails/fpp/fpp-receiver-mail";
 import FppSenderMail from "./emails/fpp/fpp-sender-mail";
 import { sendMail } from "./utils/send-mail";
+import FppDailyAnalytics from "./emails/fpp/fpp-daily-analytics";
 
 const app = new Elysia()
   .use(bearer())
@@ -40,8 +41,8 @@ const app = new Elysia()
         template: FppReceiverMail(body),
       });
 
-      console.log("Emails sent successfully", body);
-      return { message: "Emails sent successfully" };
+      console.log("FPP contact emails sent successfully", body);
+      return { message: "FPP contact emails sent successfully" };
     },
     {
       body: t.Object({
@@ -49,6 +50,36 @@ const app = new Elysia()
         email: t.String({ format: "email" }),
         subject: t.Nullable(t.String()),
         message: t.Nullable(t.String()),
+      }),
+      beforeHandle({ env, bearer, set }) {
+        if (bearer !== env.BEA_SECRET_KEY) {
+          set.status = 400;
+          set.headers["WWW-Authenticate"] =
+            `Bearer realm='sign', error="invalid_request"`;
+          return { message: "Unauthorized" };
+        }
+      },
+    },
+  )
+  .post(
+    "/fpp-daily-analytics",
+    async ({ body, env, set }) => {
+      await sendMail({
+        to: env.BEA_RECEIVER_EMAIL,
+        subject: "Free-Planning-Poker.com - Daily Analytics",
+        template: FppDailyAnalytics(body),
+      });
+
+      console.log("Daily analytic emails sent successfully", body);
+      return { message: "Daily analytic emails sent successfully" };
+    },
+    {
+      body: t.Object({
+        votes: t.Number(),
+        estimations: t.Number(),
+        rooms: t.Number(),
+        unique_users: t.Number(),
+        page_views: t.Number(),
       }),
       beforeHandle({ env, bearer, set }) {
         if (bearer !== env.BEA_SECRET_KEY) {
