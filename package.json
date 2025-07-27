@@ -9,13 +9,11 @@
     "start": "doppler run -- bun run src/index.ts",
     "dev": "doppler run -- bun run --watch src/index.ts",
     "email": "email dev --dir src/emails",
-    "format": "prettier --write .",
-    "prepare": "husky"
+    "format": "prettier --write ."
   },
   "devDependencies": {
     "@types/nodemailer": "^6.4.15",
     "bun-types": "latest",
-    "husky": "^9.0.11",
     "lint-staged": "^15.2.2",
     "prettier": "3.2.5"
   },
