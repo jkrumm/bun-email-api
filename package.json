@@ -12,10 +12,10 @@
     "format": "prettier --write ."
   },
   "devDependencies": {
-    "@types/nodemailer": "^6.4.15",
     "bun-types": "latest",
     "lint-staged": "^15.2.2",
-    "prettier": "3.2.5"
+    "prettier": "3.2.5",
+    "react-email": "^2.1.2"
   },
   "peerDependencies": {
     "typescript": "^5.0.0"
@@ -27,9 +27,7 @@
     "@react-email/render": "^0.0.13",
     "@yolk-oss/elysia-env": "^1.0.2",
     "elysia": "latest",
-    "nodemailer": "^6.9.13",
     "react": "^18.3.1",
-    "react-email": "^2.1.2",
     "resend": "^3.2.0"
   }
 }
