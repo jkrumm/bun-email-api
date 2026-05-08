@@ -25,6 +25,7 @@ const app = new Elysia()
     }),
   )
   .get("/", () => "Hello Elysia")
+  .get("/health", () => ({ ok: true }))
   .post(
     "/fpp",
     async ({ body, env, set }) => {

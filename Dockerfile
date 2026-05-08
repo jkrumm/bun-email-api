@@ -1,34 +1,27 @@
-# Use the official Bun image as a base image
-FROM oven/bun
+FROM oven/bun:1.3-alpine AS builder
+WORKDIR /app
 
-# Set the working directory in the container
-WORKDIR /usr/src/app
+COPY package.json bun.lockb tsconfig.json ./
+RUN bun install --production --ignore-scripts
 
-# Install git and other package dependencies
-RUN apt-get update && \
-    apt-get upgrade -y && \
-    apt-get install -y git
+COPY src ./src
 
-# Copy the contents from the local directory into the container
-COPY . .
+FROM oven/bun:1.3-alpine AS runner
+WORKDIR /app
 
-# Set the working directory in the container to your app directory
-WORKDIR /usr/src/app
+RUN apk add --no-cache curl ca-certificates \
+  && addgroup -S app && adduser -S app -G app
 
-# Verify that the package.json file exists
-RUN if [ ! -f ./package.json ]; then echo "Error: package.json not found!"; exit 1; fi
+COPY --from=builder --chown=app:app /app/node_modules /app/node_modules
+COPY --from=builder --chown=app:app /app/src /app/src
+COPY --from=builder --chown=app:app /app/package.json /app/package.json
 
-# Install any needed packages
-RUN bun install
-
-# Set the environment variables
-ENV NODE_ENV production
-
-# Make port 3010 available to the world outside this container
+ENV NODE_ENV=production
 EXPOSE 3010
 
-# Verify that the index.ts file exists
-RUN if [ ! -f ./src/index.ts ]; then echo "Error: src/index.ts not found!"; exit 1; fi
+USER app
 
-# Run the app
+HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -fsS http://localhost:3010/health || exit 1
+
 CMD ["bun", "run", "src/index.ts"]
