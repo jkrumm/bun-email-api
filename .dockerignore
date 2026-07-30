@@ -1,0 +1,28 @@
+# Build context is the repo root (.github/workflows/deploy.yml: context: ".").
+# The Dockerfile only COPYs package.json, bun.lockb, tsconfig.json and src/ —
+# everything listed here is provably unreferenced by any COPY/ADD.
+
+# Dependencies (reinstalled in the builder stage)
+**/node_modules
+
+# VCS — nothing reads git metadata at build time
+.git
+.gitignore
+
+# Secrets / local env
+.env
+.env.*
+
+# CI + tooling config, not part of the image
+.github
+.claude
+.vscode
+.idea
+
+# Noise
+**/.DS_Store
+**/*.log
+coverage
+.nyc_output
+.turbo
+.cache
