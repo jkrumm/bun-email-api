@@ -1,5 +1,4 @@
-import { Heading, Text, Section, Button } from "@react-email/components";
-import * as React from "react";
+import { Heading, Text, Section, Button } from "react-email";
 import FppLayout from "../../layouts/fpp.layout";
 
 export interface FppSenderMailProps {
@@ -10,10 +9,10 @@ export interface FppSenderMailProps {
 }
 
 export default function FppSenderMail({
-  name = "John Doe",
-  email = "john.doe@gmail.com",
-  subject = "Hello World!",
-  message = "Hello, I am interested in your product",
+  name,
+  email,
+  subject,
+  message,
 }: FppSenderMailProps) {
   return (
     <FppLayout>
@@ -59,3 +58,10 @@ export default function FppSenderMail({
     </FppLayout>
   );
 }
+
+FppSenderMail.PreviewProps = {
+  name: "John Doe",
+  email: "john.doe@gmail.com",
+  subject: "Hello World!",
+  message: "Hello, I am interested in your product",
+} satisfies FppSenderMailProps;

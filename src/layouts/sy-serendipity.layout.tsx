@@ -1,10 +1,10 @@
-import { Container, Heading, Html, Section } from "@react-email/components";
-import * as React from "react";
+import { Container, Heading, Html, Section } from "react-email";
+import type { ReactNode } from "react";
 
 export default function SySerendipityLayout({
   children,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <Html

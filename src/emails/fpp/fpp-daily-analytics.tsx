@@ -1,5 +1,5 @@
-import { Heading, Text, Section, Row, Column } from "@react-email/components";
-import * as React from "react";
+import { Heading, Text, Section, Row, Column } from "react-email";
+import type { CSSProperties } from "react";
 import FppLayout from "../../layouts/fpp.layout";
 
 export interface FppSenderMailProps {
@@ -10,23 +10,23 @@ export interface FppSenderMailProps {
   page_views: number;
 }
 
-const columnStyle33: React.CSSProperties = {
+const columnStyle33: CSSProperties = {
   width: "33%",
   border: "1px solid #2E2E2E",
   padding: "10px",
 };
 
-const columnStyle50: React.CSSProperties = {
+const columnStyle50: CSSProperties = {
   ...columnStyle33,
   width: "50%",
 };
 
 export default function FppDailyAnalytics({
-  votes = 3,
-  estimations = 10,
-  rooms = 2,
-  unique_users = 10,
-  page_views = 30,
+  votes,
+  estimations,
+  rooms,
+  unique_users,
+  page_views,
 }: FppSenderMailProps) {
   return (
     <FppLayout>
@@ -71,3 +71,11 @@ export default function FppDailyAnalytics({
     </FppLayout>
   );
 }
+
+FppDailyAnalytics.PreviewProps = {
+  votes: 3,
+  estimations: 10,
+  rooms: 2,
+  unique_users: 10,
+  page_views: 30,
+} satisfies FppSenderMailProps;

@@ -1,33 +1,31 @@
 {
   "name": "bun-email-api",
-  "module": "src/index.js",
+  "module": "src/index.ts",
   "type": "module",
-  "lint-staged": {
-    "**/*": "prettier --write --ignore-unknown"
-  },
   "scripts": {
     "start": "doppler run -- bun run src/index.ts",
     "dev": "doppler run -- bun run --watch src/index.ts",
     "email": "email dev --dir src/emails",
-    "format": "prettier --write ."
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "devDependencies": {
-    "bun-types": "latest",
-    "lint-staged": "^15.2.2",
-    "prettier": "3.2.5",
-    "react-email": "^2.1.2"
-  },
-  "peerDependencies": {
-    "typescript": "^5.0.0"
+    "@types/bun": "1.4.2",
+    "@types/react": "19.3.0",
+    "prettier": "3.9.6",
+    "typescript": "7.0.2"
   },
   "dependencies": {
-    "@elysiajs/bearer": "^1.0.2",
-    "@react-email/components": "^0.0.17",
-    "@react-email/html": "^0.0.8",
-    "@react-email/render": "^0.0.13",
-    "@yolk-oss/elysia-env": "^1.0.2",
-    "elysia": "latest",
-    "react": "^18.3.1",
-    "resend": "^3.2.0"
+    "@ai-sdk/openai-compatible": "3.0.48",
+    "@elysiajs/bearer": "1.4.4",
+    "ai": "7.0.99",
+    "elysia": "1.4.30",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-email": "6.9.5",
+    "resend": "6.28.0",
+    "zod": "4.6.5"
   }
 }

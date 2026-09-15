@@ -2,7 +2,7 @@
 FROM oven/bun:1.3-alpine AS builder
 WORKDIR /app
 
-COPY package.json bun.lockb tsconfig.json ./
+COPY package.json bun.lock tsconfig.json ./
 RUN --mount=type=cache,target=/root/.bun/install/cache \
     bun install --frozen-lockfile --production --ignore-scripts
 

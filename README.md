@@ -1,32 +1,28 @@
 # bun-email-api
 
-TODOs:
-
-- [x] setup Doppler secrets
-- [x] create a new jkrumm.noreply@gmail.com email account for sending emails
-- [x] send emails with gmail https://blog.logrocket.com/streamline-email-creation-react-email/
-- [x] validate the incoming payload
-- [x] protect the api with a token
-- [ ] containerize the app https://bun.sh/guides/ecosystem/docker (don't forget to include all email templates)
-
-Nice to have:
-
-- [ ] provide a health check endpoint including gmail connection
-- [ ] validate the email address https://rapidapi.com/Top-Rated/api/e-mail-check-invalid-or-disposable-domain
-- [ ] add a simple rate limiter using the ip address and only allow 1 request every 30 seconds
-
 ## Local Development
 
-To install dependencies:
+To install dependencies (uses the committed `bun.lock`):
 
 ```bash
-bun install
+bun install --frozen-lockfile
 ```
 
 To run:
 
 ```bash
 bun run start
+```
+
+Other scripts:
+
+```bash
+bun run dev              # watch mode
+bun run email             # preview email templates (src/emails)
+bun run typecheck         # tsc --noEmit
+bun test                  # run tests
+bun run format             # prettier --write .
+bun run format:check       # prettier --check .
 ```
 
 This project was created using `bun init` in bun v1.0.7. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.

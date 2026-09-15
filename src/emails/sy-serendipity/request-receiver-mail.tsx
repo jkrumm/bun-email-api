@@ -1,5 +1,4 @@
-import { Heading, Text, Section } from "@react-email/components";
-import * as React from "react";
+import { Heading, Text, Section } from "react-email";
 import SySerendipityLayout from "../../layouts/sy-serendipity.layout";
 
 export interface SySerendipityRequestProps {
@@ -20,16 +19,16 @@ function displayValue(value: string | null) {
 }
 
 export default function SySerendipityRequestMail({
-  firstName = "John",
-  lastName = "Doe",
-  email = "john.doe@gmail.com",
-  numberOfPeople = "4",
-  destination = "Cyclades",
-  duration = "7 days",
-  arrivalDate = "2026-06-01",
-  departureDate = "2026-06-08",
-  phone = "+30 123 456 7890",
-  message = "Looking forward to hearing from you!",
+  firstName,
+  lastName,
+  email,
+  numberOfPeople,
+  destination,
+  duration,
+  arrivalDate,
+  departureDate,
+  phone,
+  message,
 }: SySerendipityRequestProps) {
   return (
     <SySerendipityLayout>
@@ -86,3 +85,16 @@ export default function SySerendipityRequestMail({
     </SySerendipityLayout>
   );
 }
+
+SySerendipityRequestMail.PreviewProps = {
+  firstName: "John",
+  lastName: "Doe",
+  email: "john.doe@gmail.com",
+  numberOfPeople: "4",
+  destination: "Cyclades",
+  duration: "7 days",
+  arrivalDate: "2026-06-01",
+  departureDate: "2026-06-08",
+  phone: "+30 123 456 7890",
+  message: "Looking forward to hearing from you!",
+} satisfies SySerendipityRequestProps;

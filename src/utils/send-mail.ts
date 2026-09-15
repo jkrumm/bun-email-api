@@ -1,9 +1,14 @@
+import type { ReactElement } from "react";
 import { Resend } from "resend";
+import { env } from "../env";
 
-const resend = new Resend(process.env.BEA_RESEND_API_KEY);
+const resend = new Resend(env.BEA_RESEND_API_KEY);
+
+const DEFAULT_FROM =
+  "Free-Planning-Poker.com <no-reply@free-planning-poker.com>";
 
 export async function sendMail({
-  from,
+  from = DEFAULT_FROM,
   to,
   replyTo,
   subject,
@@ -13,16 +18,12 @@ export async function sendMail({
   to: string;
   replyTo?: string;
   subject: string;
-  template: JSX.Element;
+  template: ReactElement;
 }): Promise<void> {
-  if (!from) {
-    from = "Free-Planning-Poker.com <no-reply@free-planning-poker.com>";
-  }
-
   const email = await resend.emails.send({
     from,
     to,
-    reply_to: replyTo ? replyTo : undefined,
+    replyTo,
     subject,
     react: template,
   });
@@ -36,8 +37,7 @@ export async function sendMail({
       subject,
     });
     throw new Error(
-      // @ts-ignore
-      `${email.error["statusCode"] || ""} - ${email.error.name} - ${email.error.message}`,
+      `${email.error.statusCode ?? ""} - ${email.error.name} - ${email.error.message}`,
     );
   }
 
