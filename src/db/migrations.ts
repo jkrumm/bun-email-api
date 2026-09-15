@@ -87,6 +87,16 @@ const migrations: Migration[] = [
       );
     `,
   },
+  {
+    // Resend returns created_at as "2026-09-15 07:15:57.115000+00" (UTC);
+    // rows are compared as ISO strings, so rewrite synced rows to ISO.
+    version: 3,
+    up: `
+      UPDATE emails
+      SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', substr(created_at, 1, 26))
+      WHERE created_at LIKE '____-__-__ %';
+    `,
+  },
 ];
 
 export function runMigrations(db: Database): void {

@@ -98,6 +98,44 @@ describe("GET /api/emails", () => {
     expect(body.data.map((e) => e.id)).toEqual(["in_1"]);
   });
 
+  test("no filters returns every direction and enrichment status", async () => {
+    const { app, emails } = testApp(API_KEY);
+    emails.upsertEmail({
+      id: "in_1",
+      direction: "inbound",
+      fromAddress: "guest@example.com",
+      toAddresses: ["charter@example.com"],
+      subject: "Charter request",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    emails.upsertEmail({
+      id: "out_1",
+      direction: "outbound",
+      fromAddress: "no-reply@example.com",
+      toAddresses: ["guest@example.com"],
+      subject: "Confirmation",
+      createdAt: "2026-01-02T00:00:00.000Z",
+    });
+    emails.saveEnrichment("out_1", {
+      category: "notification",
+      priority: "low",
+      actionRequired: false,
+      summary: "Confirmation.",
+      suggestedAction: null,
+      language: "en",
+      facts: [],
+      model: "test",
+    });
+
+    const response = await app.handle(
+      new Request("http://localhost/api/emails", { headers: authHeaders() }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { data: { id: string }[] };
+    expect(body.data.map((e) => e.id)).toEqual(["out_1", "in_1"]);
+  });
+
   test("category accepts a comma-separated list", async () => {
     const { app } = testApp(API_KEY);
 

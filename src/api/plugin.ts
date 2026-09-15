@@ -24,7 +24,7 @@ function defaultSince(): string {
 }
 
 const emailsListQuery = t.Object({
-  direction: t.Optional(t.UnionEnum(["inbound", "outbound"])),
+  direction: t.Optional(t.Union([t.Literal("inbound"), t.Literal("outbound")])),
   // Comma-separated, e.g. ?category=inquiry,customer
   category: t.Optional(t.String()),
   source: t.Optional(t.String()),
@@ -34,7 +34,9 @@ const emailsListQuery = t.Object({
   since: t.Optional(t.String()),
   until: t.Optional(t.String()),
   action_required: t.Optional(t.BooleanString()),
-  status: t.Optional(t.UnionEnum(["pending", "done", "failed"])),
+  status: t.Optional(
+    t.Union([t.Literal("pending"), t.Literal("done"), t.Literal("failed")]),
+  ),
   limit: t.Optional(t.Numeric({ minimum: 1, maximum: 100 })),
   cursor: t.Optional(t.String()),
 });
@@ -48,8 +50,10 @@ const statsQuery = t.Object({
 });
 
 const submissionsListQuery = t.Object({
-  verdict: t.Optional(t.UnionEnum(["legit", "spam", "marketing"])),
-  source: t.Optional(t.UnionEnum(["fpp", "sy-serendipity"])),
+  verdict: t.Optional(
+    t.Union([t.Literal("legit"), t.Literal("spam"), t.Literal("marketing")]),
+  ),
+  source: t.Optional(t.Union([t.Literal("fpp"), t.Literal("sy-serendipity")])),
   delivered: t.Optional(t.BooleanString()),
   limit: t.Optional(t.Numeric({ minimum: 1, maximum: 100 })),
   cursor: t.Optional(t.String()),

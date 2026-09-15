@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { AdminResend } from "../admin/types";
 import { openDatabase } from "../db/client";
 import { createEmailsRepo } from "../db/emails";
-import { syncEmails } from "./resend-sync";
+import { syncEmails, toIsoTimestamp } from "./resend-sync";
 
 interface OutboundFixture {
   id: string;
@@ -285,4 +285,15 @@ describe("syncEmails", () => {
     expect(result.errors.length).toBeGreaterThan(0);
     expect(result.errors[0]).toContain("Rate limit exceeded");
   }, 10_000);
+});
+
+describe("toIsoTimestamp", () => {
+  test("normalizes Resend's Postgres-style timestamps to ISO UTC", () => {
+    expect(toIsoTimestamp("2026-09-15 07:15:57.115000+00")).toBe(
+      "2026-09-15T07:15:57.115Z",
+    );
+    expect(toIsoTimestamp("2026-09-15T07:15:57.115Z")).toBe(
+      "2026-09-15T07:15:57.115Z",
+    );
+  });
 });

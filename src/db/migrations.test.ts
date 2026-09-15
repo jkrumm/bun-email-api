@@ -32,3 +32,22 @@ describe("runMigrations", () => {
     expect(user_version).toBeGreaterThan(0);
   });
 });
+
+describe("migration 3", () => {
+  test("rewrites Resend-style created_at values to ISO", () => {
+    const db = new Database(":memory:");
+    db.run("PRAGMA user_version = 0");
+    const migrate = () => runMigrations(db);
+    migrate();
+    db.run("PRAGMA user_version = 2");
+    db.run(
+      `INSERT INTO emails (id, direction, from_address, to_addresses, subject, created_at, attachments, synced_at)
+       VALUES ('e1', 'outbound', 'a@example.com', '[]', 's', '2026-09-15 07:15:57.115000+00', '[]', '2026-09-15T08:00:00.000Z')`,
+    );
+    migrate();
+    const row = db
+      .query<{ created_at: string }, []>("SELECT created_at FROM emails")
+      .get()!;
+    expect(row.created_at).toBe("2026-09-15T07:15:57.115Z");
+  });
+});

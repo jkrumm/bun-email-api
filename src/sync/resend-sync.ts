@@ -54,6 +54,14 @@ async function withRetry<T extends { error: { name?: string } | null }>(
   return result;
 }
 
+// Resend timestamps look like "2026-09-15 07:15:57.115000+00". The store
+// compares created_at as ISO strings, so normalize before upserting.
+export function toIsoTimestamp(value: string): string {
+  const normalized = value.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00");
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? value : date.toISOString();
+}
+
 function toOutboundUpsert(
   full: GetEmailResponseSuccess,
   { withBody }: { withBody: boolean },
@@ -67,7 +75,7 @@ function toOutboundUpsert(
     bcc: full.bcc,
     replyTo: full.reply_to,
     subject: full.subject,
-    createdAt: full.created_at,
+    createdAt: toIsoTimestamp(full.created_at),
     lastEvent: full.last_event,
     html: withBody ? full.html : undefined,
     text: withBody ? full.text : undefined,
@@ -127,7 +135,7 @@ async function syncOutbound(
             bcc: item.bcc,
             replyTo: item.reply_to,
             subject: item.subject,
-            createdAt: item.created_at,
+            createdAt: toIsoTimestamp(item.created_at),
             lastEvent: item.last_event,
           });
         }
@@ -206,7 +214,7 @@ async function syncInbound(
         bcc: full.data.bcc,
         replyTo: full.data.reply_to,
         subject: full.data.subject,
-        createdAt: full.data.created_at,
+        createdAt: toIsoTimestamp(full.data.created_at),
         html: full.data.html,
         text: full.data.text,
         attachments,
