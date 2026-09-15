@@ -1,8 +1,5 @@
 import type { ReactElement } from "react";
-import { Resend } from "resend";
-import { env } from "../env";
-
-const resend = new Resend(env.BEA_RESEND_API_KEY);
+import { resend } from "./resend";
 
 const DEFAULT_FROM =
   "Free-Planning-Poker.com <no-reply@free-planning-poker.com>";
