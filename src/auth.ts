@@ -3,15 +3,21 @@ import { bearer } from "@elysiajs/bearer";
 import { Elysia } from "elysia";
 import { env } from "./env";
 
+// Shared by every bearer/basic-auth guard in this codebase (form routes,
+// the admin UI, the /api/* layer) so token comparisons never leak timing.
+export function timingSafeEqualStrings(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+
+  if (bufA.length !== bufB.length) return false;
+
+  return timingSafeEqual(bufA, bufB);
+}
+
 function isValidBearer(token: string | undefined): boolean {
   if (!token) return false;
 
-  const provided = Buffer.from(token);
-  const expected = Buffer.from(env.BEA_SECRET_KEY);
-
-  if (provided.length !== expected.length) return false;
-
-  return timingSafeEqual(provided, expected);
+  return timingSafeEqualStrings(token, env.BEA_SECRET_KEY);
 }
 
 /**

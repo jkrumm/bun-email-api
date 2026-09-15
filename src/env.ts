@@ -17,6 +17,12 @@ const envSchema = z.object({
   // Full-access key for the admin UI's list/get calls; the send path keeps
   // the sending-only BEA_RESEND_API_KEY.
   BEA_RESEND_ADMIN_API_KEY: z.string().optional(),
+
+  // Directory for the SQLite database file. Defaults to ./data so local dev
+  // doesn't need any setup; ops sets it to a mounted volume path in prod.
+  BEA_DATA_DIR: z.string().default("./data"),
+  // Bearer key for /api/*. Unset -> every /api route 404s.
+  BEA_API_KEY: z.string().min(16).optional(),
 });
 
 function parseEnv() {

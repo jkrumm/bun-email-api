@@ -36,6 +36,7 @@ export const sySerendipityRoutes = withBearerAuth(new Elysia()).post(
           replyTo: replyToName ? `${replyToName} <${body.email}>` : body.email,
           subject: `${subjectPrefix}SY Serendipity I - Charter Request`,
           template: SySerendipityRequestMail(body),
+          source: "sy-serendipity-request",
         });
       },
     });

@@ -12,13 +12,15 @@ FROM oven/bun:1.4-alpine AS runner
 WORKDIR /app
 
 RUN apk add --no-cache curl ca-certificates \
-  && addgroup -S app && adduser -S app -G app
+  && addgroup -S app && adduser -S app -G app \
+  && mkdir -p /data && chown app:app /data
 
 COPY --from=builder --chown=app:app /app/node_modules /app/node_modules
 COPY --from=builder --chown=app:app /app/src /app/src
 COPY --from=builder --chown=app:app /app/package.json /app/package.json
 
 ENV NODE_ENV=production
+ENV BEA_DATA_DIR=/data
 EXPOSE 3010
 
 USER app

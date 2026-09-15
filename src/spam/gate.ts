@@ -1,7 +1,7 @@
 import { classifySubmission, shouldSuppress } from "./classify";
-import { recordVerdict } from "./store";
+import { submissionsRepo } from "../db";
 import type { ClassificationResult } from "./classify";
-import type { SubmissionSource } from "./store";
+import type { SubmissionSource } from "../db/submissions";
 
 // Callers of /fpp and /sy-serendipity are a Netlify function (~10-26s limit)
 // and Cloudflare edge (~100s) — waiting for the full classifySubmission call
@@ -10,17 +10,21 @@ import type { SubmissionSource } from "./store";
 // running in the background and its verdict is recorded late.
 export const CLASSIFY_DECISION_DEADLINE_MS = 8_000;
 
+type RecordSubmission = typeof submissionsRepo.recordSubmission;
+
 export async function gateSubmission({
   source,
   submission,
   deliver,
   classify = classifySubmission,
+  record = submissionsRepo.recordSubmission,
   deadlineMs = CLASSIFY_DECISION_DEADLINE_MS,
 }: {
   source: SubmissionSource;
   submission: Record<string, string | number | null>;
   deliver: (opts: { subjectPrefix: string }) => Promise<void>;
   classify?: typeof classifySubmission;
+  record?: RecordSubmission;
   deadlineMs?: number;
 }): Promise<{ delivered: boolean }> {
   const classification = classify({ source, submission });
@@ -43,6 +47,7 @@ export async function gateSubmission({
       source,
       submission,
       deliver,
+      record,
       verdict: winner.verdict,
     });
   }
@@ -56,7 +61,7 @@ export async function gateSubmission({
   } catch (error) {
     void classification
       .then((verdict) =>
-        recordVerdict({
+        record({
           source,
           verdict: verdict.verdict,
           confidence: verdict.confidence,
@@ -77,7 +82,7 @@ export async function gateSubmission({
 
   void classification
     .then((verdict) => {
-      recordVerdict({
+      record({
         source,
         verdict: verdict.verdict,
         confidence: verdict.confidence,
@@ -104,15 +109,17 @@ async function handleClassified({
   source,
   submission,
   deliver,
+  record,
   verdict,
 }: {
   source: SubmissionSource;
   submission: Record<string, string | number | null>;
   deliver: (opts: { subjectPrefix: string }) => Promise<void>;
+  record: RecordSubmission;
   verdict: ClassificationResult;
 }): Promise<{ delivered: boolean }> {
   if (shouldSuppress(verdict)) {
-    recordVerdict({
+    record({
       source,
       verdict: verdict.verdict,
       confidence: verdict.confidence,
@@ -132,7 +139,7 @@ async function handleClassified({
   try {
     await deliver({ subjectPrefix });
   } catch (error) {
-    recordVerdict({
+    record({
       source,
       verdict: verdict.verdict,
       confidence: verdict.confidence,
@@ -144,7 +151,7 @@ async function handleClassified({
     throw error;
   }
 
-  recordVerdict({
+  record({
     source,
     verdict: verdict.verdict,
     confidence: verdict.confidence,

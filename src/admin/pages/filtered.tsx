@@ -1,22 +1,21 @@
 import { Fragment } from "react";
-import { listRecentVerdicts, type VerdictRecord } from "../../spam/store";
+import { submissionsRepo } from "../../db";
+import type { SubmissionRecord } from "../../db/submissions";
 import { AdminLayout } from "../layout";
 import { Pill } from "../components/pill";
 import { formatDateTime, formatPercent } from "../format";
 
-function submissionEntries(submission: VerdictRecord["submission"]) {
+function submissionEntries(submission: SubmissionRecord["submission"]) {
   return Object.entries(submission);
 }
 
 export function FilteredPage() {
-  const records = listRecentVerdicts();
+  const { data: records } = submissionsRepo.listSubmissions({ limit: 200 });
 
   return (
     <AdminLayout title="Filtered" active="filtered">
       <h1>Filtered</h1>
-      <p className="eyebrow">
-        In-memory, resets on deploy. Showing the last 200 submissions.
-      </p>
+      <p className="eyebrow">Showing the last 200 submissions.</p>
       {records.length === 0 ? (
         <p className="empty">No submissions judged yet.</p>
       ) : (

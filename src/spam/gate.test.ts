@@ -1,11 +1,8 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { gateSubmission } from "./gate";
 import type { ClassificationResult } from "./classify";
-import { listRecentVerdicts, resetVerdictsForTests } from "./store";
-
-afterEach(() => {
-  resetVerdictsForTests();
-});
+import { openDatabase } from "../db/client";
+import { createSubmissionsRepo } from "../db/submissions";
 
 function classifyResult(
   overrides: Partial<ClassificationResult> = {},
@@ -39,6 +36,10 @@ function deliverSpy(impl?: () => Promise<void>) {
   return { deliver, calls };
 }
 
+function testSubmissionsRepo() {
+  return createSubmissionsRepo(openDatabase(":memory:"));
+}
+
 describe("gateSubmission", () => {
   test("suppresses a high-confidence spam verdict without delivering", async () => {
     const { deliver, calls } = deliverSpy();
@@ -49,17 +50,19 @@ describe("gateSubmission", () => {
         reason: "looks spammy",
       }),
     );
+    const submissions = testSubmissionsRepo();
 
     const result = await gateSubmission({
       source: "fpp",
       submission: { email: "a@b.com" },
       deliver,
       classify,
+      record: submissions.recordSubmission,
     });
 
     expect(result).toEqual({ delivered: false });
     expect(calls).toHaveLength(0);
-    const [record] = listRecentVerdicts();
+    const [record] = submissions.listSubmissions().data;
     expect(record?.delivered).toBe(false);
     expect(record?.verdict).toBe("spam");
   });
@@ -73,12 +76,14 @@ describe("gateSubmission", () => {
         reason: "maybe marketing",
       }),
     );
+    const submissions = testSubmissionsRepo();
 
     const result = await gateSubmission({
       source: "fpp",
       submission: { email: "a@b.com" },
       deliver,
       classify,
+      record: submissions.recordSubmission,
     });
 
     expect(result).toEqual({ delivered: true });
@@ -90,12 +95,14 @@ describe("gateSubmission", () => {
     const classify = instantClassify(
       classifyResult({ verdict: "legit", confidence: 0.95, reason: "genuine" }),
     );
+    const submissions = testSubmissionsRepo();
 
     const result = await gateSubmission({
       source: "fpp",
       submission: { email: "a@b.com" },
       deliver,
       classify,
+      record: submissions.recordSubmission,
     });
 
     expect(result).toEqual({ delivered: true });
@@ -108,22 +115,24 @@ describe("gateSubmission", () => {
       classifyResult({ verdict: "spam", confidence: 0.9, reason: "late spam" }),
       50,
     );
+    const submissions = testSubmissionsRepo();
 
     const result = await gateSubmission({
       source: "fpp",
       submission: { email: "a@b.com" },
       deliver,
       classify,
+      record: submissions.recordSubmission,
       deadlineMs: 10,
     });
 
     expect(result).toEqual({ delivered: true });
     expect(calls).toEqual([{ subjectPrefix: "" }]);
-    expect(listRecentVerdicts()).toHaveLength(0);
+    expect(submissions.listSubmissions().data).toHaveLength(0);
 
     await new Promise((resolve) => setTimeout(resolve, 80));
 
-    const [record] = listRecentVerdicts();
+    const [record] = submissions.listSubmissions().data;
     expect(record?.delivered).toBe(true);
     expect(record?.reason).toBe("Decided after deadline: late spam");
   });
@@ -135,6 +144,7 @@ describe("gateSubmission", () => {
     const { deliver } = deliverSpy(async () => {
       throw new Error("resend down");
     });
+    const submissions = testSubmissionsRepo();
 
     await expect(
       gateSubmission({
@@ -142,10 +152,11 @@ describe("gateSubmission", () => {
         submission: { email: "a@b.com" },
         deliver,
         classify,
+        record: submissions.recordSubmission,
       }),
     ).rejects.toThrow("resend down");
 
-    const [record] = listRecentVerdicts();
+    const [record] = submissions.listSubmissions().data;
     expect(record?.delivered).toBe(false);
     expect(record?.reason).toBe("genuine · delivery failed");
   });

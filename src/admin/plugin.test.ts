@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { createAdminRoutes } from "./plugin";
 import type { AdminResend } from "./types";
 import { emailRegistry } from "../emails/registry";
-import { recordVerdict, resetVerdictsForTests } from "../spam/store";
+import { submissionsRepo } from "../db";
 
 const PASSWORD = "local-admin-pass-123";
 const now = new Date().toISOString();
@@ -48,10 +48,6 @@ function baseFakeResend(): AdminResend {
 }
 
 describe("admin plugin", () => {
-  afterEach(() => {
-    resetVerdictsForTests();
-  });
-
   test("password unset -> /admin/templates is 404", async () => {
     const app = createAdminRoutes({
       password: undefined,
@@ -210,7 +206,7 @@ describe("admin plugin", () => {
   });
 
   test("/admin/filtered HTML-escapes submission values", async () => {
-    recordVerdict({
+    submissionsRepo.recordSubmission({
       source: "fpp",
       verdict: "spam",
       confidence: 0.9,
