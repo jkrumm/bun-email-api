@@ -49,10 +49,10 @@ New env vars:
 
 ## Admin UI
 
-`GET /admin` — server-rendered, zero-JS pages behind HTTP Basic auth (user `admin`): template previews, emails sent and received via Resend, and the spam filter's recent submissions (SQLite-backed, last 200).
+`GET /admin` — a server-rendered, zero-JS dashboard behind HTTP Basic auth (user `admin`), styled with `basalt-ui` tokens (automatic light/dark via `prefers-color-scheme`). Pages: Overview (stats, 14-day activity chart, category breakdown, needs-action and recently-blocked panels), Inbox (filterable/searchable list of every stored email, keyset-paginated), an email detail page (meta, AI enrichment, HTML/text content, a "Re-run AI" action), Spam filter (every judged submission), and Templates (previews of the registered email templates). All filtering happens through GET query params; the two POST actions (`Sync now`, `Re-run AI`) are guarded by a same-origin check. Dates are formatted in German (`Europe/Berlin`).
 
 - `BEA_ADMIN_PASSWORD` — Basic auth password, min 12 chars. Unset → every `/admin` route returns 404.
-- `BEA_RESEND_ADMIN_API_KEY` — optional full-access Resend key for the Sent/Received tabs. Without it the admin falls back to `BEA_RESEND_API_KEY`, and a sending-only key shows Resend's `restricted_api_key` error there. Received emails additionally need inbound receiving enabled on the domain.
+- `bun run seed:demo` (refuses to run with `NODE_ENV=production`) seeds `$BEA_DATA_DIR` with realistic fake emails and submissions for exploring the dashboard locally.
 
 ## Storage
 
@@ -71,7 +71,9 @@ New env var:
 
 ## Sync
 
-`src/sync/resend-sync.ts` pulls the full history of sent and received emails from Resend into SQLite: on an empty database this is a one-time backfill, and every run after that only fetches emails newer than what's already stored (it stops paging as soon as it sees a known id). A background scheduler runs it once ~5s after boot and then every 5 minutes; `POST /api/sync` triggers a run on demand (409 if one is already in progress). `sendMail()` also writes a minimal row immediately after a successful send, which the next sync fills in with `html`/`text`/`last_event`.
+`src/sync/resend-sync.ts` pulls the full history of sent and received emails from Resend into SQLite: on an empty database this is a one-time backfill, and every run after that only fetches emails newer than what's already stored (it stops paging as soon as it sees a known id). A background scheduler runs it once ~5s after boot and then every 5 minutes; `POST /api/sync` (and the admin UI's "Sync now" button) triggers a run on demand (409 if one is already in progress). `sendMail()` also writes a minimal row immediately after a successful send, which the next sync fills in with `html`/`text`/`last_event`.
+
+- `BEA_RESEND_ADMIN_API_KEY` — optional full-access Resend key used for sync. Without it, sync falls back to the sending-only `BEA_RESEND_API_KEY`, and Received emails additionally need inbound receiving enabled on the domain.
 
 ## Enrichment
 

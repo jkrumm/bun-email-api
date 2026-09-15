@@ -7,7 +7,7 @@ const ADMIN_SECURITY_HEADERS: Record<string, string> = {
   "x-frame-options": "SAMEORIGIN",
   "referrer-policy": "no-referrer",
   "content-security-policy":
-    "default-src 'none'; style-src 'unsafe-inline'; img-src * data:; frame-src 'self'; form-action 'self'; base-uri 'none'",
+    "default-src 'none'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src * data:; frame-src 'self'; form-action 'self'; base-uri 'none'",
 };
 
 export function renderPage(
@@ -46,6 +46,22 @@ export function textResponse(
       "content-type": "text/plain; charset=utf-8",
       ...ADMIN_SECURITY_HEADERS,
       ...extraHeaders,
+    },
+  });
+}
+
+// Assets (app.css, font files) are cacheable and aren't page markup, so they
+// get their own response helper instead of the no-store security headers.
+export function assetResponse(
+  body: string | Uint8Array,
+  contentType: string,
+): Response {
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "content-type": contentType,
+      "cache-control": "public, max-age=3600",
+      "x-robots-tag": "noindex",
     },
   });
 }

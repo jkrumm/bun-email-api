@@ -26,7 +26,12 @@ const envSchema = z.object({
 });
 
 function parseEnv() {
-  const result = envSchema.safeParse(process.env);
+  // Compose interpolates an unset `${VAR}` to "", which must read as unset —
+  // otherwise optional vars with a min length crash-loop the container.
+  const definedEnv = Object.fromEntries(
+    Object.entries(process.env).filter(([, value]) => value !== ""),
+  );
+  const result = envSchema.safeParse(definedEnv);
 
   if (!result.success) {
     const issues = result.error.issues

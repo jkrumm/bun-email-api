@@ -112,7 +112,7 @@ export interface EmailStats {
   totalsByDirection: Record<string, number>;
   countsByCategory: Record<string, number>;
   actionRequiredOpen: number;
-  perDay: { date: string; count: number }[];
+  perDay: { date: string; inbound: number; outbound: number }[];
   submissionsByVerdict: Record<string, number>;
   submissionsSuppressed: number;
 }
@@ -607,6 +607,27 @@ export function createEmailsRepo(db: Database) {
     };
   }
 
+  function actionRequiredCount(): number {
+    const row = db
+      .query<{ count: number }, []>(
+        `SELECT COUNT(*) as count
+         FROM emails e
+         JOIN email_enrichments en ON en.email_id = e.id
+         WHERE en.action_required = 1`,
+      )
+      .get();
+    return row?.count ?? 0;
+  }
+
+  function lastSyncedAt(): string | null {
+    const row = db
+      .query<{ synced_at: string | null }, []>(
+        "SELECT MAX(synced_at) as synced_at FROM emails",
+      )
+      .get();
+    return row?.synced_at ?? null;
+  }
+
   return {
     upsertEmail,
     getEmail,
@@ -618,6 +639,8 @@ export function createEmailsRepo(db: Database) {
     resetEnrichment,
     knownEmailIds,
     emailStats,
+    actionRequiredCount,
+    lastSyncedAt,
   };
 }
 
@@ -630,15 +653,15 @@ function escapeLike(value: string): string {
 function computePerDayCounts(
   db: Database,
   since: string,
-): { date: string; count: number }[] {
+): { date: string; inbound: number; outbound: number }[] {
   const fourteenDaysAgo = new Date(
     Date.now() - 14 * 24 * 60 * 60 * 1000,
   ).toISOString();
   const effectiveSince = since > fourteenDaysAgo ? since : fourteenDaysAgo;
 
   const rows = db
-    .query<{ created_at: string }, [string]>(
-      "SELECT created_at FROM emails WHERE created_at >= ?",
+    .query<{ created_at: string; direction: EmailDirection }, [string]>(
+      "SELECT created_at, direction FROM emails WHERE created_at >= ?",
     )
     .all(effectiveSince);
 
@@ -649,13 +672,15 @@ function computePerDayCounts(
     day: "2-digit",
   });
 
-  const counts = new Map<string, number>();
+  const counts = new Map<string, { inbound: number; outbound: number }>();
   for (const row of rows) {
     const day = dayFormatter.format(new Date(row.created_at));
-    counts.set(day, (counts.get(day) ?? 0) + 1);
+    const entry = counts.get(day) ?? { inbound: 0, outbound: 0 };
+    entry[row.direction]++;
+    counts.set(day, entry);
   }
 
   return [...counts.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, count]) => ({ date, count }));
+    .map(([date, entry]) => ({ date, ...entry }));
 }

@@ -1,77 +1,49 @@
 import type { ReactNode } from "react";
+import { NavIcon } from "./ui";
+import { APP_CSS_VERSION } from "./assets";
 
-export type AdminTab = "sent" | "received" | "filtered" | "templates";
+export type AdminNav =
+  "overview" | "inbox" | "needs-action" | "submissions" | "templates";
 
-const TABS: { id: AdminTab; label: string; href: string }[] = [
-  { id: "sent", label: "Sent", href: "/admin/sent" },
-  { id: "received", label: "Received", href: "/admin/received" },
-  { id: "filtered", label: "Filtered", href: "/admin/filtered" },
-  { id: "templates", label: "Templates", href: "/admin/templates" },
+const NAV_ITEMS: {
+  id: AdminNav;
+  label: string;
+  href: string;
+  icon: Parameters<typeof NavIcon>[0]["name"];
+}[] = [
+  { id: "overview", label: "Overview", href: "/admin", icon: "overview" },
+  { id: "inbox", label: "Inbox", href: "/admin/emails", icon: "inbox" },
+  {
+    id: "needs-action",
+    label: "Needs action",
+    href: "/admin/emails?action_required=true",
+    icon: "action",
+  },
+  {
+    id: "submissions",
+    label: "Spam filter",
+    href: "/admin/submissions",
+    icon: "spam",
+  },
+  {
+    id: "templates",
+    label: "Templates",
+    href: "/admin/templates",
+    icon: "templates",
+  },
 ];
-
-// Kept intentionally plain: no client JS, so there is nothing to escape or
-// sandbox here beyond the static string below.
-const STYLES = `
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: #f5f2eb;
-    color: #203b3e;
-    font: 14px/1.5 system-ui, -apple-system, sans-serif;
-  }
-  h1, h2, h3 { font-family: Georgia, serif; font-weight: 400; margin: 0 0 16px; }
-  a { color: #95754d; }
-  .nav {
-    display: flex;
-    align-items: center;
-    gap: 32px;
-    padding: 16px 32px;
-    border-bottom: 1px solid #d7d8cf;
-    background: #e6e8de;
-  }
-  .wordmark { font-family: Georgia, serif; font-size: 18px; }
-  .tabs { display: flex; gap: 24px; }
-  .tab { text-decoration: none; color: #56615d; padding-bottom: 4px; }
-  .tab.active { color: #203b3e; border-bottom: 2px solid #95754d; }
-  .main { padding: 32px; max-width: 1100px; margin: 0 auto; }
-  .eyebrow {
-    text-transform: uppercase;
-    font-size: 11px;
-    letter-spacing: 0.17em;
-    color: #56615d;
-    margin: 0 0 16px;
-  }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #d7d8cf; font-size: 13px; }
-  th { text-transform: uppercase; font-size: 11px; letter-spacing: 0.1em; color: #56615d; }
-  .pill {
-    display: inline-block;
-    padding: 2px 8px;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-  .pill-outline { border: 1px solid #56615d; color: #56615d; }
-  .pill-fill { background: #95754d; color: #f5f2eb; }
-  .email-frame { width: 100%; height: 900px; border: 1px solid #d7d8cf; background: #fff; }
-  .panel { background: #e6e8de; border: 1px solid #d7d8cf; padding: 16px; }
-  .error-panel { background: #e6e8de; border: 1px solid #95754d; padding: 16px; }
-  dl { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; margin: 0 0 24px; }
-  dt { color: #56615d; }
-  dd { margin: 0; }
-  .empty { color: #56615d; padding: 32px 0; }
-  .actions { margin: 16px 0; }
-  details summary { cursor: pointer; color: #95754d; }
-  pre { white-space: pre-wrap; word-break: break-word; }
-`;
 
 export function AdminLayout({
   title,
   active,
+  needsActionCount,
+  notice,
   children,
 }: {
   title: string;
-  active: AdminTab;
+  active: AdminNav;
+  needsActionCount?: number;
+  notice?: { text: string; error?: boolean } | null;
   children: ReactNode;
 }) {
   return (
@@ -79,26 +51,60 @@ export function AdminLayout({
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>{`${title} · Mail Admin`}</title>
-        <style dangerouslySetInnerHTML={{ __html: STYLES }} />
+        <meta name="color-scheme" content="light dark" />
+        <title>{`${title} · Mail`}</title>
+        <link
+          rel="stylesheet"
+          href={`/admin/assets/app.css?v=${APP_CSS_VERSION}`}
+        />
       </head>
       <body>
-        <nav className="nav">
-          <span className="wordmark">Mail</span>
-          <div className="tabs">
-            {TABS.map((tab) => (
-              <a
-                key={tab.id}
-                className={tab.id === active ? "tab active" : "tab"}
-                href={tab.href}
-                aria-current={tab.id === active ? "page" : undefined}
-              >
-                {tab.label}
-              </a>
-            ))}
+        <div className="app-shell">
+          <header className="app-header">
+            <span className="wordmark">Mail</span>
+            <form className="search-form" method="get" action="/admin/emails">
+              <input
+                className="control"
+                style={{ width: "100%" }}
+                type="search"
+                name="q"
+                placeholder="Search emails…"
+                aria-label="Search emails"
+              />
+            </form>
+          </header>
+          <div className="app-body">
+            <nav className="app-sidebar">
+              <ul className="nav-list">
+                {NAV_ITEMS.map((item) => (
+                  <li key={item.id}>
+                    <a
+                      href={item.href}
+                      className={
+                        item.id === active ? "nav-item active" : "nav-item"
+                      }
+                      aria-current={item.id === active ? "page" : undefined}
+                    >
+                      <NavIcon name={item.icon} />
+                      {item.label}
+                      {item.id === "needs-action" && needsActionCount ? (
+                        <span className="nav-badge">{needsActionCount}</span>
+                      ) : null}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+            <main className="app-content">
+              {notice ? (
+                <p className={notice.error ? "notice notice-error" : "notice"}>
+                  {notice.text}
+                </p>
+              ) : null}
+              {children}
+            </main>
           </div>
-        </nav>
-        <main className="main">{children}</main>
+        </div>
       </body>
     </html>
   );

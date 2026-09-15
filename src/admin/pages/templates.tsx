@@ -2,40 +2,65 @@ import { createElement } from "react";
 import { render } from "react-email";
 import { emailRegistry, type EmailTemplateEntry } from "../../emails/registry";
 import { AdminLayout } from "../layout";
-import { EmailFrame } from "../components/email-frame";
+import { EmailFrame, SegmentedLinks } from "../ui";
 
 type RegistryEntry = (typeof emailRegistry)[number];
 
-export function TemplatesListPage() {
+export function TemplatesListPage({
+  needsActionCount,
+}: {
+  needsActionCount: number;
+}) {
   return (
-    <AdminLayout title="Templates" active="templates">
-      <h1>Templates</h1>
-      <table>
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>ID</th>
-          </tr>
-        </thead>
-        <tbody>
-          {emailRegistry.map((entry) => (
-            <tr key={entry.id}>
-              <td>
-                <a href={`/admin/templates/${entry.id}`}>{entry.name}</a>
-              </td>
-              <td>{entry.id}</td>
+    <AdminLayout
+      title="Templates"
+      active="templates"
+      needsActionCount={needsActionCount}
+    >
+      <h1 className="page-title">Templates</h1>
+      <p className="page-subtitle" style={{ marginBottom: 16 }}>
+        {emailRegistry.length} registered templates
+      </p>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>ID</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {emailRegistry.map((entry) => (
+              <tr key={entry.id}>
+                <td>
+                  <a className="row-link" href={`/admin/templates/${entry.id}`}>
+                    {entry.name}
+                  </a>
+                </td>
+                <td className="mono">{entry.id}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </AdminLayout>
   );
 }
 
-export function TemplateNotFoundPage({ id }: { id: string }) {
+export function TemplateNotFoundPage({
+  id,
+  needsActionCount,
+}: {
+  id: string;
+  needsActionCount: number;
+}) {
   return (
-    <AdminLayout title="Template not found" active="templates">
-      <h1>Template not found</h1>
+    <AdminLayout
+      title="Template not found"
+      active="templates"
+      needsActionCount={needsActionCount}
+    >
+      <h1 className="page-title">Template not found</h1>
       <p>No template registered with id "{id}".</p>
     </AdminLayout>
   );
@@ -55,16 +80,50 @@ export async function renderTemplateHtml(
 export function TemplateDetailPage({
   entry,
   html,
+  width,
+  needsActionCount,
 }: {
   entry: RegistryEntry;
   html: string;
+  width: 600 | 375;
+  needsActionCount: number;
 }) {
   return (
-    <AdminLayout title={entry.name} active="templates">
-      <h1>{entry.name}</h1>
-      <p className="eyebrow">{entry.id}</p>
-      <EmailFrame html={html} />
-      <p className="actions">
+    <AdminLayout
+      title={entry.name}
+      active="templates"
+      needsActionCount={needsActionCount}
+    >
+      <a className="back-link" href="/admin/templates">
+        ← Back
+      </a>
+      <h1 className="page-title">{entry.name}</h1>
+      <p className="page-subtitle mono" style={{ marginBottom: 16 }}>
+        {entry.id}
+      </p>
+
+      <p style={{ marginBottom: 8 }}>
+        <SegmentedLinks
+          options={[
+            {
+              label: "600px",
+              href: `/admin/templates/${entry.id}?width=600`,
+              active: width === 600,
+            },
+            {
+              label: "375px",
+              href: `/admin/templates/${entry.id}?width=375`,
+              active: width === 375,
+            },
+          ]}
+        />
+      </p>
+
+      <div style={{ maxWidth: width }}>
+        <EmailFrame html={html} />
+      </div>
+
+      <p className="actions" style={{ marginTop: 12 }}>
         <a href={`/admin/templates/${entry.id}/raw`}>Raw HTML</a>
       </p>
       <details>
