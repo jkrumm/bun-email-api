@@ -14,6 +14,9 @@ const envSchema = z.object({
   BEA_LLM_API_KEY: z.string().optional(),
   BEA_LLM_MODEL: z.string().optional(),
   BEA_ADMIN_PASSWORD: z.string().optional(),
+  // Full-access key for the admin UI's list/get calls; the send path keeps
+  // the sending-only BEA_RESEND_API_KEY.
+  BEA_RESEND_ADMIN_API_KEY: z.string().optional(),
 });
 
 function parseEnv() {

@@ -46,3 +46,10 @@ New env vars:
 - `BEA_LLM_BASE_URL` — OpenAI-compatible base URL for the classifier model.
 - `BEA_LLM_API_KEY` — API key for that endpoint.
 - `BEA_LLM_MODEL` — model id to use. Pick a fast/cheap model — form submitters wait on this call synchronously (bounded only by a 30-minute hang guard, not a tight timeout).
+
+## Admin UI
+
+`GET /admin` — server-rendered, zero-JS pages behind HTTP Basic auth (user `admin`): template previews, emails sent and received via Resend, and the spam filter's recent verdicts (in-memory, last 200, reset on deploy).
+
+- `BEA_ADMIN_PASSWORD` — Basic auth password, min 12 chars. Unset → every `/admin` route returns 404.
+- `BEA_RESEND_ADMIN_API_KEY` — optional full-access Resend key for the Sent/Received tabs. Without it the admin falls back to `BEA_RESEND_API_KEY`, and a sending-only key shows Resend's `restricted_api_key` error there. Received emails additionally need inbound receiving enabled on the domain.

@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { Elysia, redirect } from "elysia";
 import { env } from "../env";
-import { resend } from "../utils/resend";
+import { adminResend } from "../utils/resend";
 import { emailRegistry } from "../emails/registry";
 import type { AdminResend } from "./types";
 import { rawHtmlResponse, renderPage, textResponse } from "./render";
@@ -134,5 +134,5 @@ export function createAdminRoutes({
 
 export const adminRoutes = createAdminRoutes({
   password: env.BEA_ADMIN_PASSWORD,
-  resend,
+  resend: adminResend,
 });
