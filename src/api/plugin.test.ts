@@ -97,6 +97,18 @@ describe("GET /api/emails", () => {
     const body = (await response.json()) as { data: { id: string }[] };
     expect(body.data.map((e) => e.id)).toEqual(["in_1"]);
   });
+
+  test("category accepts a comma-separated list", async () => {
+    const { app } = testApp(API_KEY);
+
+    const response = await app.handle(
+      new Request("http://localhost/api/emails?category=spam,inquiry", {
+        headers: authHeaders(),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+  });
 });
 
 describe("GET /api/emails/:id", () => {

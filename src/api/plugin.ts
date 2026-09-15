@@ -25,7 +25,8 @@ function defaultSince(): string {
 
 const emailsListQuery = t.Object({
   direction: t.Optional(t.UnionEnum(["inbound", "outbound"])),
-  category: t.Optional(t.ArrayString()),
+  // Comma-separated, e.g. ?category=inquiry,customer
+  category: t.Optional(t.String()),
   source: t.Optional(t.String()),
   from: t.Optional(t.String()),
   to: t.Optional(t.String()),
@@ -91,7 +92,10 @@ export function createApiRoutes({
       ({ query }) =>
         emails.listEmails({
           direction: query.direction as EmailDirection | undefined,
-          category: query.category,
+          category: query.category
+            ?.split(",")
+            .map((value) => value.trim())
+            .filter(Boolean),
           source: query.source,
           from: query.from,
           to: query.to,
