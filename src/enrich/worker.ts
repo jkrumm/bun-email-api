@@ -1,6 +1,7 @@
 import { emailsRepo } from "../db";
 import { getLlmConfig } from "../llm/model";
 import { enrichEmail } from "./enrich-email";
+import { applyEnrichmentOutcome } from "./re-enrich";
 
 const BATCH_SIZE = 10;
 const INTERVAL_MS = 30_000;
@@ -26,11 +27,7 @@ export async function runEnrichmentBatch(): Promise<void> {
       if (!email) continue;
 
       const outcome = await enrichEmail({ email });
-      if (outcome.ok) {
-        emailsRepo.saveEnrichment(emailId, outcome.result);
-      } else {
-        emailsRepo.markEnrichmentFailed(emailId, outcome.error);
-      }
+      applyEnrichmentOutcome({ emails: emailsRepo, id: emailId, outcome });
     }
   } finally {
     running = false;
@@ -44,6 +41,10 @@ export function startEnrichmentWorker(): void {
     return;
   }
 
-  const interval = setInterval(() => void runEnrichmentBatch(), INTERVAL_MS);
+  const interval = setInterval(() => {
+    void runEnrichmentBatch().catch((error) => {
+      console.error("Scheduled enrichment batch failed", { error });
+    });
+  }, INTERVAL_MS);
   interval.unref();
 }

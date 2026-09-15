@@ -191,6 +191,85 @@ describe("syncEmails", () => {
     expect(emails.getEmail("email_1")?.html).toBe("<p>hi</p>");
   });
 
+  test("a run that fails on page 2 doesn't lose older emails — the next run pages past the known first page", async () => {
+    const db = openDatabase(":memory:");
+    const emails = createEmailsRepo(db);
+
+    const fixtures = [
+      fixture({ id: "email_old", created_at: "2026-01-01T00:00:00.000Z" }),
+      fixture({ id: "email_mid", created_at: "2026-01-02T00:00:00.000Z" }),
+      fixture({ id: "email_new", created_at: "2026-01-03T00:00:00.000Z" }),
+    ];
+
+    let listCalls = 0;
+    const failingOnPage2: AdminResend = {
+      emails: {
+        list: async ({ after }: { limit?: number; after?: string }) => {
+          listCalls++;
+          if (listCalls === 2) {
+            return {
+              data: null,
+              error: {
+                message: "boom",
+                statusCode: 500,
+                name: "internal_server_error" as const,
+              },
+              headers: null,
+            };
+          }
+          const sorted = [...fixtures].sort((a, b) =>
+            b.created_at.localeCompare(a.created_at),
+          );
+          const startIndex = after
+            ? sorted.findIndex((item) => item.id === after) + 1
+            : 0;
+          const page = sorted.slice(startIndex, startIndex + 1);
+          return {
+            data: {
+              object: "list" as const,
+              has_more: startIndex + page.length < sorted.length,
+              data: page.map(({ html: _html, text: _text, ...rest }) => rest),
+            },
+            error: null,
+            headers: null,
+          };
+        },
+        get: async (id: string) => {
+          const full = fixtures.find((item) => item.id === id);
+          if (!full) {
+            return {
+              data: null,
+              error: {
+                message: "not found",
+                statusCode: 404,
+                name: "not_found" as const,
+              },
+              headers: null,
+            };
+          }
+          return {
+            data: { ...full, object: "email" as const },
+            error: null,
+            headers: null,
+          };
+        },
+        receiving: emptyReceivingFake(),
+      },
+    };
+
+    const run1 = await syncEmails({ db, resend: failingOnPage2 });
+    expect(run1.errors.length).toBeGreaterThan(0);
+    expect(emails.getEmail("email_new")).not.toBeNull();
+    expect(emails.getEmail("email_mid")).toBeNull();
+    expect(emails.getEmail("email_old")).toBeNull();
+
+    const run2 = await syncEmails({ db, resend: makeOutboundFake(fixtures) });
+
+    expect(run2.errors).toEqual([]);
+    expect(emails.getEmail("email_mid")).not.toBeNull();
+    expect(emails.getEmail("email_old")).not.toBeNull();
+  });
+
   test("reports a Resend {error} page instead of throwing", async () => {
     const db = openDatabase(":memory:");
     const resend = makeOutboundFake([], {

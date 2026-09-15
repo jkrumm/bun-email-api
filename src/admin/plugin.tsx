@@ -4,6 +4,8 @@ import { env } from "../env";
 import { emailsRepo, submissionsRepo } from "../db";
 import { runSyncNow } from "../sync/resend-sync";
 import { enrichEmail, type EnrichEmailOutcome } from "../enrich/enrich-email";
+import { reEnrichEmail } from "../enrich/re-enrich";
+import { safeBackPath } from "./safe-back-path";
 import type {
   EmailDirection,
   EmailsRepo,
@@ -117,6 +119,11 @@ function noticeFor(
     case "enrich-failed":
       return {
         text: "AI enrichment failed — see the error below.",
+        error: true,
+      };
+    case "enrich-busy":
+      return {
+        text: "AI enrichment is already running for this email.",
         error: true,
       };
     default:
@@ -247,7 +254,7 @@ export function createAdminRoutes({
       );
     })
     .get("/emails/:id", ({ params, query }) => {
-      const back = query.back || "/admin/emails";
+      const back = safeBackPath(query.back);
       const email = emails.getEmail(params.id);
       const needsActionCount = emails.actionRequiredCount();
 
@@ -274,7 +281,7 @@ export function createAdminRoutes({
       );
     })
     .post("/emails/:id/enrich", async ({ params, query }) => {
-      const back = query.back || "/admin/emails";
+      const back = safeBackPath(query.back);
       const view = query.view === "text" ? "text" : "html";
       const detailPath = `/admin/emails/${params.id}?back=${encodeURIComponent(back)}&view=${view}`;
 
@@ -283,17 +290,18 @@ export function createAdminRoutes({
         return redirect(back, 303);
       }
 
-      emails.resetEnrichment(params.id);
-      const outcome = await enrich(existing);
+      const result = await reEnrichEmail({ emails, id: params.id, enrich });
 
-      if (outcome.ok) {
-        emails.saveEnrichment(params.id, outcome.result);
+      if (result.status === "busy") {
+        return redirect(withParam(detailPath, "notice", "enrich-busy"), 303);
+      }
+
+      if (result.outcome.ok) {
         return redirect(withParam(detailPath, "notice", "enriched"), 303);
       }
 
-      emails.markEnrichmentFailed(params.id, outcome.error);
       const notice =
-        outcome.error === "Enrichment not configured"
+        result.outcome.error === "Enrichment not configured"
           ? "enrich-not-configured"
           : "enrich-failed";
       return redirect(withParam(detailPath, "notice", notice), 303);

@@ -18,6 +18,7 @@ describe("runMigrations", () => {
     expect(tables).toContain("email_enrichments");
     expect(tables).toContain("submissions");
     expect(tables).toContain("emails_fts");
+    expect(tables).toContain("sync_state");
   });
 
   test("is idempotent — running twice does not throw or duplicate schema", () => {

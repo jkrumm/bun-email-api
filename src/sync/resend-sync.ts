@@ -1,7 +1,13 @@
 import type { Database } from "bun:sqlite";
+import type { GetEmailResponseSuccess } from "resend";
 import type { AdminResend } from "../admin/types";
 import { adminResend } from "../utils/resend";
-import { createEmailsRepo, type EmailAttachment } from "../db/emails";
+import {
+  createEmailsRepo,
+  type EmailAttachment,
+  type UpsertEmailInput,
+} from "../db/emails";
+import { createSyncStateRepo } from "../db/sync-state";
 import { db as defaultDb } from "../db/client";
 import { runEnrichmentBatch } from "../enrich/worker";
 
@@ -16,9 +22,15 @@ export interface SyncDirectionSummary {
   updated: number;
 }
 
+// Inbound never updates an existing row (a known inbound email is simply
+// skipped), so it never had a meaningful `updated` count.
+export interface SyncInboundSummary {
+  new: number;
+}
+
 export interface SyncSummary {
   outbound: SyncDirectionSummary;
-  inbound: SyncDirectionSummary;
+  inbound: SyncInboundSummary;
   errors: string[];
 }
 
@@ -42,10 +54,34 @@ async function withRetry<T extends { error: { name?: string } | null }>(
   return result;
 }
 
+function toOutboundUpsert(
+  full: GetEmailResponseSuccess,
+  { withBody }: { withBody: boolean },
+): UpsertEmailInput {
+  return {
+    id: full.id,
+    direction: "outbound",
+    fromAddress: full.from,
+    toAddresses: full.to,
+    cc: full.cc,
+    bcc: full.bcc,
+    replyTo: full.reply_to,
+    subject: full.subject,
+    createdAt: full.created_at,
+    lastEvent: full.last_event,
+    html: withBody ? full.html : undefined,
+    text: withBody ? full.text : undefined,
+  };
+}
+
 async function syncOutbound(
   emails: ReturnType<typeof createEmailsRepo>,
   resend: AdminResend,
   errors: string[],
+  // Only trust the "known id → stop" pagination shortcut when the previous
+  // run for this direction completed without errors — otherwise a prior
+  // partial failure could leave older emails permanently un-synced.
+  trustKnownIdShortcut: boolean,
 ): Promise<SyncDirectionSummary> {
   let newCount = 0;
   let updatedCount = 0;
@@ -80,20 +116,7 @@ async function syncOutbound(
             errors.push(`outbound get ${item.id}: ${full.error.message}`);
             continue;
           }
-          emails.upsertEmail({
-            id: full.data.id,
-            direction: "outbound",
-            fromAddress: full.data.from,
-            toAddresses: full.data.to,
-            cc: full.data.cc,
-            bcc: full.data.bcc,
-            replyTo: full.data.reply_to,
-            subject: full.data.subject,
-            createdAt: full.data.created_at,
-            lastEvent: full.data.last_event,
-            html: full.data.html,
-            text: full.data.text,
-          });
+          emails.upsertEmail(toOutboundUpsert(full.data, { withBody: true }));
         } else {
           emails.upsertEmail({
             id: item.id,
@@ -118,24 +141,11 @@ async function syncOutbound(
         continue;
       }
 
-      emails.upsertEmail({
-        id: full.data.id,
-        direction: "outbound",
-        fromAddress: full.data.from,
-        toAddresses: full.data.to,
-        cc: full.data.cc,
-        bcc: full.data.bcc,
-        replyTo: full.data.reply_to,
-        subject: full.data.subject,
-        createdAt: full.data.created_at,
-        lastEvent: full.data.last_event,
-        html: full.data.html,
-        text: full.data.text,
-      });
+      emails.upsertEmail(toOutboundUpsert(full.data, { withBody: true }));
       newCount++;
     }
 
-    if (sawKnown || !has_more) break;
+    if ((trustKnownIdShortcut && sawKnown) || !has_more) break;
     after = data[data.length - 1]?.id;
   }
 
@@ -146,9 +156,9 @@ async function syncInbound(
   emails: ReturnType<typeof createEmailsRepo>,
   resend: AdminResend,
   errors: string[],
-): Promise<SyncDirectionSummary> {
+  trustKnownIdShortcut: boolean,
+): Promise<SyncInboundSummary> {
   let newCount = 0;
-  let updatedCount = 0;
   let after: string | undefined;
 
   while (true) {
@@ -204,11 +214,11 @@ async function syncInbound(
       newCount++;
     }
 
-    if (sawKnown || !has_more) break;
+    if ((trustKnownIdShortcut && sawKnown) || !has_more) break;
     after = data[data.length - 1]?.id;
   }
 
-  return { new: newCount, updated: updatedCount };
+  return { new: newCount };
 }
 
 export async function syncEmails({
@@ -219,10 +229,31 @@ export async function syncEmails({
   resend: AdminResend;
 }): Promise<SyncSummary> {
   const emails = createEmailsRepo(db);
+  const syncState = createSyncStateRepo(db);
   const errors: string[] = [];
 
-  const outbound = await syncOutbound(emails, resend, errors);
-  const inbound = await syncInbound(emails, resend, errors);
+  const outboundState = syncState.getState("outbound");
+  const outbound = await syncOutbound(
+    emails,
+    resend,
+    errors,
+    outboundState?.lastRunComplete ?? true,
+  );
+
+  const inboundState = syncState.getState("inbound");
+  const inbound = await syncInbound(
+    emails,
+    resend,
+    errors,
+    inboundState?.lastRunComplete ?? true,
+  );
+
+  syncState.recordRun("outbound", {
+    complete: !errors.some((error) => error.startsWith("outbound")),
+  });
+  syncState.recordRun("inbound", {
+    complete: !errors.some((error) => error.startsWith("inbound")),
+  });
 
   return { outbound, inbound, errors };
 }
@@ -235,8 +266,18 @@ export async function runSyncNow(): Promise<SyncSummary | { busy: true }> {
   syncing = true;
   try {
     const summary = await syncEmails({ db: defaultDb, resend: adminResend });
+
+    if (summary.errors.length > 0) {
+      console.error(
+        `sync completed with ${summary.errors.length} error(s)`,
+        summary.errors,
+      );
+    }
+
     if (summary.outbound.new > 0 || summary.inbound.new > 0) {
-      void runEnrichmentBatch();
+      void runEnrichmentBatch().catch((error) => {
+        console.error("Post-sync enrichment batch failed", { error });
+      });
     }
     return summary;
   } finally {
@@ -247,9 +288,14 @@ export async function runSyncNow(): Promise<SyncSummary | { busy: true }> {
 export function startSync(): void {
   if (process.env.NODE_ENV === "test") return;
 
+  const runAndLog = () =>
+    void runSyncNow().catch((error) => {
+      console.error("Scheduled sync failed", { error });
+    });
+
   const timer = setTimeout(() => {
-    void runSyncNow();
-    const interval = setInterval(() => void runSyncNow(), SYNC_INTERVAL_MS);
+    runAndLog();
+    const interval = setInterval(runAndLog, SYNC_INTERVAL_MS);
     interval.unref();
   }, FIRST_RUN_DELAY_MS);
   timer.unref();

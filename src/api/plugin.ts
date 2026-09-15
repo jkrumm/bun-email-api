@@ -2,6 +2,7 @@ import { Elysia, t } from "elysia";
 import { timingSafeEqualStrings } from "../auth";
 import { env } from "../env";
 import { enrichEmail } from "../enrich/enrich-email";
+import { reEnrichEmail } from "../enrich/re-enrich";
 import { emailsRepo, submissionsRepo } from "../db";
 import { runSyncNow } from "../sync/resend-sync";
 import type {
@@ -33,7 +34,7 @@ const emailsListQuery = t.Object({
   until: t.Optional(t.String()),
   action_required: t.Optional(t.BooleanString()),
   status: t.Optional(t.UnionEnum(["pending", "done", "failed"])),
-  limit: t.Optional(t.Numeric()),
+  limit: t.Optional(t.Numeric({ minimum: 1, maximum: 100 })),
   cursor: t.Optional(t.String()),
 });
 
@@ -49,7 +50,7 @@ const submissionsListQuery = t.Object({
   verdict: t.Optional(t.UnionEnum(["legit", "spam", "marketing"])),
   source: t.Optional(t.UnionEnum(["fpp", "sy-serendipity"])),
   delivered: t.Optional(t.BooleanString()),
-  limit: t.Optional(t.Numeric()),
+  limit: t.Optional(t.Numeric({ minimum: 1, maximum: 100 })),
   cursor: t.Optional(t.String()),
 });
 
@@ -129,13 +130,15 @@ export function createApiRoutes({
           return { error: "not_found" };
         }
 
-        emails.resetEnrichment(params.id);
-        const outcome = await enrichEmail({ email: existing });
+        const result = await reEnrichEmail({
+          emails,
+          id: params.id,
+          enrich: (email) => enrichEmail({ email }),
+        });
 
-        if (outcome.ok) {
-          emails.saveEnrichment(params.id, outcome.result);
-        } else {
-          emails.markEnrichmentFailed(params.id, outcome.error);
+        if (result.status === "busy") {
+          set.status = 409;
+          return { error: "enrichment_in_progress" };
         }
 
         return emails.getEmail(params.id)!.enrichment;

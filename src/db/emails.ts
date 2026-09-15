@@ -119,7 +119,10 @@ export interface EmailStats {
 
 const DEFAULT_LIST_LIMIT = 25;
 const MAX_LIST_LIMIT = 100;
-const STALE_CLAIM_MS = 10 * 60_000;
+// Longer than the enrichment call's own 30-min hang guard
+// (src/enrich/enrich-email.ts's abortSignal timeout), so a claim is never
+// treated as stale while a call could still legitimately be running.
+const STALE_CLAIM_MS = 35 * 60_000;
 const MAX_ENRICHMENT_ATTEMPTS = 3;
 
 interface EmailRow {
@@ -273,7 +276,9 @@ export function createEmailsRepo(db: Database) {
     );
   }
 
-  function upsertEmail(input: UpsertEmailInput): void {
+  // Wrapped in one transaction so a partial write (e.g. the email row lands
+  // but the enrichment row or FTS index doesn't) can never happen.
+  const upsertEmailTx = db.transaction((input: UpsertEmailInput) => {
     db.run(
       `INSERT INTO emails (
          id, direction, from_address, to_addresses, cc, bcc, reply_to,
@@ -312,21 +317,18 @@ export function createEmailsRepo(db: Database) {
       ],
     );
 
-    const enrichmentExists = db
-      .query<{ email_id: string }, [string]>(
-        "SELECT email_id FROM email_enrichments WHERE email_id = ?",
-      )
-      .get(input.id);
-
-    if (!enrichmentExists) {
-      db.run(
-        `INSERT INTO email_enrichments (email_id, status, attempts, updated_at)
-         VALUES (?, 'pending', 0, ?)`,
-        [input.id, new Date().toISOString()],
-      );
-    }
+    db.run(
+      `INSERT INTO email_enrichments (email_id, status, attempts, updated_at)
+       VALUES (?, 'pending', 0, ?)
+       ON CONFLICT(email_id) DO NOTHING`,
+      [input.id, new Date().toISOString()],
+    );
 
     syncFtsRow(input.id);
+  });
+
+  function upsertEmail(input: UpsertEmailInput): void {
+    upsertEmailTx(input);
   }
 
   function getEmail(id: string): EmailWithEnrichment | null {
@@ -522,7 +524,11 @@ export function createEmailsRepo(db: Database) {
     );
   }
 
+  // A no-op while another worker holds a fresh claim (claimed_at within
+  // STALE_CLAIM_MS), so it can never clobber an in-flight enrichment run —
+  // the subsequent claimEnrichment call then correctly reports "busy".
   function resetEnrichment(id: string): void {
+    const staleBefore = new Date(Date.now() - STALE_CLAIM_MS).toISOString();
     db.run(
       `UPDATE email_enrichments SET
          status = 'pending',
@@ -530,8 +536,9 @@ export function createEmailsRepo(db: Database) {
          attempts = 0,
          claimed_at = NULL,
          updated_at = ?
-       WHERE email_id = ?`,
-      [new Date().toISOString(), id],
+       WHERE email_id = ?
+         AND (claimed_at IS NULL OR claimed_at < ?)`,
+      [new Date().toISOString(), id, staleBefore],
     );
   }
 

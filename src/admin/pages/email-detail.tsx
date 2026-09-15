@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import type { EmailWithEnrichment } from "../../db/emails";
 import { AdminLayout } from "../layout";
+import { safeBackPath } from "../safe-back-path";
 import {
   Badge,
   Card,
@@ -35,7 +36,7 @@ export function EmailNotFoundPage({
       active="inbox"
       needsActionCount={needsActionCount}
     >
-      <a className="back-link" href={back}>
+      <a className="back-link" href={safeBackPath(back)}>
         ← Back
       </a>
       <h1 className="page-title">Email not found</h1>
@@ -68,7 +69,7 @@ export function EmailDetailPage({
       needsActionCount={needsActionCount}
       notice={notice}
     >
-      <a className="back-link" href={back}>
+      <a className="back-link" href={safeBackPath(back)}>
         ← Back
       </a>
       <h1 className="page-title">{email.subject}</h1>

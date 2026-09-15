@@ -137,6 +137,29 @@ describe("gateSubmission", () => {
     expect(record?.reason).toBe("Decided after deadline: late spam");
   });
 
+  test("a throwing record() is logged and swallowed — delivery still succeeds", async () => {
+    const { deliver, calls } = deliverSpy();
+    const classify = instantClassify(
+      classifyResult({ verdict: "legit", confidence: 0.95, reason: "genuine" }),
+    );
+    const record: ReturnType<
+      typeof createSubmissionsRepo
+    >["recordSubmission"] = () => {
+      throw new Error("unable to open database file");
+    };
+
+    const result = await gateSubmission({
+      source: "fpp",
+      submission: { email: "a@b.com" },
+      deliver,
+      classify,
+      record,
+    });
+
+    expect(result).toEqual({ delivered: true });
+    expect(calls).toEqual([{ subjectPrefix: "" }]);
+  });
+
   test("rethrows and records delivered:false when delivery fails", async () => {
     const classify = instantClassify(
       classifyResult({ verdict: "legit", confidence: 0.9, reason: "genuine" }),

@@ -11,3 +11,4 @@ export const submissionsRepo = createSubmissionsRepo(db);
 export { db, openDatabase } from "./client";
 export * from "./emails";
 export * from "./submissions";
+export * from "./sync-state";

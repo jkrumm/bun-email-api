@@ -77,6 +77,16 @@ const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 2,
+    up: `
+      CREATE TABLE sync_state (
+        direction TEXT PRIMARY KEY CHECK (direction IN ('inbound', 'outbound')),
+        last_run_complete INTEGER NOT NULL DEFAULT 0,
+        last_run_at TEXT
+      );
+    `,
+  },
 ];
 
 export function runMigrations(db: Database): void {

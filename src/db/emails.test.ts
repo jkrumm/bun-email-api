@@ -223,3 +223,43 @@ describe("claimEnrichment", () => {
     expect(repo().claimEnrichment("missing")).toBe(false);
   });
 });
+
+describe("resetEnrichment", () => {
+  test("does not clear a fresh claim held by another worker", () => {
+    const emails = repo();
+    emails.upsertEmail(baseEmail());
+    expect(emails.claimEnrichment("email_1")).toBe(true);
+
+    emails.resetEnrichment("email_1");
+
+    // The reset was a no-op: the claim is still held, so a second claim
+    // (simulating a manual re-enrich racing the background worker) fails.
+    expect(emails.claimEnrichment("email_1")).toBe(false);
+  });
+
+  test("resets a row with no active claim", () => {
+    const emails = repo();
+    emails.upsertEmail(baseEmail());
+    emails.markEnrichmentFailed("email_1", "boom");
+
+    emails.resetEnrichment("email_1");
+
+    expect(emails.getEmail("email_1")?.enrichment.status).toBe("pending");
+    expect(emails.claimEnrichment("email_1")).toBe(true);
+  });
+});
+
+describe("upsertEmail atomicity", () => {
+  test("calling upsertEmail twice for a new id never throws and leaves exactly one pending enrichment row", () => {
+    const emails = repo();
+
+    expect(() => {
+      emails.upsertEmail(baseEmail());
+      emails.upsertEmail(baseEmail());
+    }).not.toThrow();
+
+    const email = emails.getEmail("email_1");
+    expect(email?.enrichment.status).toBe("pending");
+    expect(email?.enrichment.attempts).toBe(0);
+  });
+});

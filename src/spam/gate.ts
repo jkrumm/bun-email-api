@@ -12,6 +12,20 @@ export const CLASSIFY_DECISION_DEADLINE_MS = 8_000;
 
 type RecordSubmission = typeof submissionsRepo.recordSubmission;
 
+// A DB write here must never turn an already-delivered (or intentionally
+// suppressed) submission into a 500 for the caller — that would make a
+// Netlify/Cloudflare retry and send a duplicate email. Log and move on.
+function safeRecord(
+  record: RecordSubmission,
+  input: Parameters<RecordSubmission>[0],
+): void {
+  try {
+    record(input);
+  } catch (error) {
+    console.error("Failed to record submission", { error });
+  }
+}
+
 export async function gateSubmission({
   source,
   submission,
@@ -61,7 +75,7 @@ export async function gateSubmission({
   } catch (error) {
     void classification
       .then((verdict) =>
-        record({
+        safeRecord(record, {
           source,
           verdict: verdict.verdict,
           confidence: verdict.confidence,
@@ -82,7 +96,7 @@ export async function gateSubmission({
 
   void classification
     .then((verdict) => {
-      record({
+      safeRecord(record, {
         source,
         verdict: verdict.verdict,
         confidence: verdict.confidence,
@@ -119,7 +133,7 @@ async function handleClassified({
   verdict: ClassificationResult;
 }): Promise<{ delivered: boolean }> {
   if (shouldSuppress(verdict)) {
-    record({
+    safeRecord(record, {
       source,
       verdict: verdict.verdict,
       confidence: verdict.confidence,
@@ -139,7 +153,7 @@ async function handleClassified({
   try {
     await deliver({ subjectPrefix });
   } catch (error) {
-    record({
+    safeRecord(record, {
       source,
       verdict: verdict.verdict,
       confidence: verdict.confidence,
@@ -151,7 +165,7 @@ async function handleClassified({
     throw error;
   }
 
-  record({
+  safeRecord(record, {
     source,
     verdict: verdict.verdict,
     confidence: verdict.confidence,

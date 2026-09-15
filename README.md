@@ -73,11 +73,15 @@ New env var:
 
 `src/sync/resend-sync.ts` pulls the full history of sent and received emails from Resend into SQLite: on an empty database this is a one-time backfill, and every run after that only fetches emails newer than what's already stored (it stops paging as soon as it sees a known id). A background scheduler runs it once ~5s after boot and then every 5 minutes; `POST /api/sync` (and the admin UI's "Sync now" button) triggers a run on demand (409 if one is already in progress). `sendMail()` also writes a minimal row immediately after a successful send, which the next sync fills in with `html`/`text`/`last_event`.
 
+Sync self-heals after a partial failure: a `sync_state` table (per direction) only marks a run complete when it drained without errors, so the next run only trusts the "known id → stop" shortcut after a clean run — otherwise it pages through the full history again rather than permanently skipping older emails.
+
 - `BEA_RESEND_ADMIN_API_KEY` — optional full-access Resend key used for sync. Without it, sync falls back to the sending-only `BEA_RESEND_API_KEY`, and Received emails additionally need inbound receiving enabled on the domain.
 
 ## Enrichment
 
 Every email is enriched once by the LLM (`src/enrich/`): `category`, `priority`, `actionRequired`, a short `summary`, a `suggestedAction`, `language`, and up to 8 extracted `facts`. A background worker (`src/enrich/worker.ts`) claims up to 10 pending/retryable rows every 30s and enriches them sequentially; it's also kicked immediately after a sync that added new rows. Enrichment reuses the same LLM configuration as the spam classifier (`BEA_LLM_BASE_URL`/`BEA_LLM_API_KEY`/`BEA_LLM_MODEL`, see above) and fails the same way: rows stay `pending` if the LLM isn't configured, and a failed attempt is retried up to 3 times before being left `failed`.
+
+`BEA_LLM_*` env vars are read once at process start — changing them requires a restart to take effect.
 
 ## API
 

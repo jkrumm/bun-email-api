@@ -20,7 +20,7 @@ function testApp(apiKey: string | undefined) {
     submissions,
     runSync: async () => ({
       outbound: { new: 0, updated: 0 },
-      inbound: { new: 0, updated: 0 },
+      inbound: { new: 0 },
       errors: [],
     }),
   });
@@ -145,5 +145,32 @@ describe("GET /api/emails/:id", () => {
     );
     const withHtmlBody = (await withHtml.json()) as Record<string, unknown>;
     expect(withHtmlBody.html).toBe("<p>hi</p>");
+  });
+});
+
+describe("POST /api/emails/:id/enrich", () => {
+  test("409 when another worker holds the claim", async () => {
+    const { app, emails } = testApp(API_KEY);
+    emails.upsertEmail({
+      id: "email_1",
+      direction: "outbound",
+      fromAddress: "no-reply@example.com",
+      toAddresses: ["guest@example.com"],
+      subject: "Confirmation",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect(emails.claimEnrichment("email_1")).toBe(true);
+
+    const response = await app.handle(
+      new Request("http://localhost/api/emails/email_1/enrich", {
+        method: "POST",
+        headers: authHeaders(),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "enrichment_in_progress",
+    });
   });
 });

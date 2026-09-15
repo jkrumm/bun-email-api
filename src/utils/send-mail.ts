@@ -1,9 +1,26 @@
 import type { ReactElement } from "react";
 import { resend } from "./resend";
-import { emailsRepo } from "../db";
+import { emailsRepo, type EmailsRepo, type UpsertEmailInput } from "../db";
 
 const DEFAULT_FROM =
   "Free-Planning-Poker.com <no-reply@free-planning-poker.com>";
+
+// A DB error here must never turn an already-sent email into a failed
+// response for the caller (that would make them retry and send a
+// duplicate). The next sync backfills this row anyway once the DB is back.
+export function recordOutboundEmail(
+  emails: Pick<EmailsRepo, "upsertEmail">,
+  input: UpsertEmailInput,
+): void {
+  try {
+    emails.upsertEmail(input);
+  } catch (error) {
+    console.error("Failed to persist outbound email row", {
+      error,
+      id: input.id,
+    });
+  }
+}
 
 export async function sendMail({
   from = DEFAULT_FROM,
@@ -53,7 +70,7 @@ export async function sendMail({
 
   // Minimal row now; the next sync fills html/last_event once Resend has
   // fully processed the send (src/sync/resend-sync.ts).
-  emailsRepo.upsertEmail({
+  recordOutboundEmail(emailsRepo, {
     id: email.data.id,
     direction: "outbound",
     fromAddress: from,

@@ -46,7 +46,7 @@ function testApp(overrides: { password?: string | undefined } = {}) {
     submissions,
     runSync: async () => ({
       outbound: { new: 1, updated: 0 },
-      inbound: { new: 2, updated: 0 },
+      inbound: { new: 2 },
       errors: [],
     }),
     enrich: async () => enrichOutcome,
@@ -228,6 +228,48 @@ describe("admin email detail", () => {
     expect(html).toContain("Guests");
     expect(html).toContain("<iframe");
     expect(html).toContain("sandbox");
+  });
+
+  test("rejects an off-site back param and falls back to the default inbox path", async () => {
+    const { app } = testApp();
+
+    const response = await app.handle(
+      new Request(
+        "http://localhost/admin/emails/does-not-exist?back=https://evil.example",
+        { headers: { authorization: basicAuth("admin", PASSWORD) } },
+      ),
+    );
+
+    expect(response.status).toBe(404);
+    const html = await response.text();
+    expect(html).toContain('href="/admin/emails"');
+    expect(html).not.toContain("evil.example");
+  });
+});
+
+describe("admin manual re-enrich", () => {
+  test("redirects with notice=enrich-busy when another worker holds the claim", async () => {
+    const { app, emails } = testApp();
+    emails.upsertEmail({
+      id: "in_1",
+      direction: "inbound",
+      fromAddress: "guest@example.com",
+      toAddresses: ["charter@example.com"],
+      subject: "Charter enquiry",
+      createdAt: FIXED_NOW.toISOString(),
+    });
+    expect(emails.claimEnrichment("in_1")).toBe(true);
+
+    const response = await app.handle(
+      new Request("http://localhost/admin/emails/in_1/enrich", {
+        method: "POST",
+        headers: sameOriginHeaders(),
+        redirect: "manual",
+      }),
+    );
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toContain("notice=enrich-busy");
   });
 });
 
