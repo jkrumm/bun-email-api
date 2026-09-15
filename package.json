@@ -12,6 +12,7 @@
     "format:check": "prettier --check ."
   },
   "devDependencies": {
+    "@ai-sdk/provider": "4.0.14",
     "@types/bun": "1.4.2",
     "@types/react": "19.3.0",
     "prettier": "3.9.6",

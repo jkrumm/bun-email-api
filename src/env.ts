@@ -10,7 +10,6 @@ const envSchema = z.object({
   BEA_SY_SERENDIPITY_FROM_EMAIL: z.string().optional(),
   PORT: z.coerce.number().default(3010),
 
-  // Unused for now — a later worker wires these up.
   BEA_LLM_BASE_URL: z.string().optional(),
   BEA_LLM_API_KEY: z.string().optional(),
   BEA_LLM_MODEL: z.string().optional(),

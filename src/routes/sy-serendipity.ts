@@ -2,6 +2,7 @@ import { Elysia, t } from "elysia";
 import { withBearerAuth } from "../auth";
 import { env } from "../env";
 import SySerendipityRequestMail from "../emails/sy-serendipity/request-receiver-mail";
+import { gateSubmission } from "../spam/gate";
 import { sendMail } from "../utils/send-mail";
 
 const sySerendipityRequestBody = t.Object({
@@ -25,15 +26,20 @@ export const sySerendipityRoutes = withBearerAuth(new Elysia()).post(
       .join(" ")
       .trim();
 
-    await sendMail({
-      to: env.BEA_SY_SERENDIPITY_RECEIVER_EMAIL,
-      from: env.BEA_SY_SERENDIPITY_FROM_EMAIL,
-      replyTo: replyToName ? `${replyToName} <${body.email}>` : body.email,
-      subject: "SY Serendipity I - Charter Request",
-      template: SySerendipityRequestMail(body),
+    await gateSubmission({
+      source: "sy-serendipity",
+      submission: body,
+      deliver: async ({ subjectPrefix }) => {
+        await sendMail({
+          to: env.BEA_SY_SERENDIPITY_RECEIVER_EMAIL,
+          from: env.BEA_SY_SERENDIPITY_FROM_EMAIL,
+          replyTo: replyToName ? `${replyToName} <${body.email}>` : body.email,
+          subject: `${subjectPrefix}SY Serendipity I - Charter Request`,
+          template: SySerendipityRequestMail(body),
+        });
+      },
     });
 
-    console.log("SY Serendipity request email sent successfully", body);
     return { message: "SY Serendipity request email sent successfully" };
   },
   { body: sySerendipityRequestBody },
