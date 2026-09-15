@@ -1,6 +1,6 @@
 import type { FunctionComponent } from "react";
 import FppDailyAnalytics, {
-  type FppSenderMailProps as FppDailyAnalyticsProps,
+  type FppDailyAnalyticsProps,
 } from "./fpp/fpp-daily-analytics";
 import FppReceiverMail, {
   type FppReceiverProps,

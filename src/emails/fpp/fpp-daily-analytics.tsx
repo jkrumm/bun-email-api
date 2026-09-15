@@ -2,7 +2,7 @@ import { Heading, Text, Section, Row, Column } from "react-email";
 import type { CSSProperties } from "react";
 import FppLayout from "../../layouts/fpp.layout";
 
-export interface FppSenderMailProps {
+export interface FppDailyAnalyticsProps {
   votes: number;
   estimations: number;
   rooms: number;
@@ -27,7 +27,7 @@ export default function FppDailyAnalytics({
   rooms,
   unique_users,
   page_views,
-}: FppSenderMailProps) {
+}: FppDailyAnalyticsProps) {
   return (
     <FppLayout>
       <Section>
@@ -78,4 +78,4 @@ FppDailyAnalytics.PreviewProps = {
   rooms: 2,
   unique_users: 10,
   page_views: 30,
-} satisfies FppSenderMailProps;
+} satisfies FppDailyAnalyticsProps;
