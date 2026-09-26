@@ -196,6 +196,7 @@ export function createAdminRoutes({
       return renderPage(
         <OverviewPage
           stats={stats}
+          jevComparison={submissions.getJevComparison({ since })}
           needsAction={
             emails.listEmails({ actionRequired: true, limit: 8 }).data
           }

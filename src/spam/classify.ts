@@ -11,7 +11,7 @@ const verdictSchema = z.object({
   reason: z.string(),
 });
 
-const SYSTEM_PROMPT = `You are a spam filter for two contact forms:
+export const SYSTEM_PROMPT = `You are a spam filter for two contact forms:
 
 1. Free-Planning-Poker.com ("fpp") — a free online planning-poker tool for agile teams. Legitimate senders are users writing feedback, bug reports, feature requests, or questions about the tool.
 2. SY Serendipity ("sy-serendipity") — a private yacht charter. Legitimate senders are prospective guests requesting a charter, even terse messages containing only an email address and travel dates.

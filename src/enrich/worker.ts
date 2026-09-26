@@ -1,6 +1,7 @@
 import { emailsRepo } from "../db";
 import { getLlmConfig } from "../llm/model";
 import { enrichEmail } from "./enrich-email";
+import { startJevEnrichment } from "./jev-email";
 import { applyEnrichmentOutcome } from "./re-enrich";
 
 const BATCH_SIZE = 10;
@@ -26,6 +27,7 @@ export async function runEnrichmentBatch(): Promise<void> {
       const email = emailsRepo.getEmail(emailId);
       if (!email) continue;
 
+      startJevEnrichment({ emails: emailsRepo, email });
       const outcome = await enrichEmail({ email });
       applyEnrichmentOutcome({ emails: emailsRepo, id: emailId, outcome });
     }

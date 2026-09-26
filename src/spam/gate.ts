@@ -1,7 +1,12 @@
 import { classifySubmission, shouldSuppress } from "./classify";
+import { judgeSubmissionWithJev } from "./jev-judge";
 import { submissionsRepo } from "../db";
 import type { ClassificationResult } from "./classify";
-import type { SubmissionSource } from "../db/submissions";
+import type {
+  JevSubmissionView,
+  RecordSubmissionInput,
+  SubmissionSource,
+} from "../db/submissions";
 
 // Callers of /fpp and /sy-serendipity are a Netlify function (~10-26s limit)
 // and Cloudflare edge (~100s) — waiting for the full classifySubmission call
@@ -12,18 +17,49 @@ export const CLASSIFY_DECISION_DEADLINE_MS = 8_000;
 
 type RecordSubmission = typeof submissionsRepo.recordSubmission;
 
-// A DB write here must never turn an already-delivered (or intentionally
-// suppressed) submission into a 500 for the caller — that would make a
-// Netlify/Cloudflare retry and send a duplicate email. Log and move on.
-function safeRecord(
-  record: RecordSubmission,
-  input: Parameters<RecordSubmission>[0],
-): void {
+type Persist = (
+  input: Omit<RecordSubmissionInput, "llmLatencyMs" | "jev">,
+) => void;
+
+// Jev is shadow-only: it runs beside the classifier, never delays or changes
+// the decision, and is recorded whenever it lands. `snapshot()` is what has
+// landed so far (stored with the row); `attachLater()` covers a row written
+// before Jev answered. Every failure path is log-only.
+function trackJev({
+  start,
+  attach,
+}: {
+  start: () => Promise<JevSubmissionView> | null;
+  attach: typeof submissionsRepo.attachJev;
+}) {
+  let landed: JevSubmissionView | null = null;
+  let pending: Promise<JevSubmissionView> | null = null;
+
   try {
-    record(input);
+    pending = start();
   } catch (error) {
-    console.error("Failed to record submission", { error });
+    console.error("Failed to start Jev verdict", { error });
   }
+
+  pending
+    ?.then((outcome) => {
+      landed = outcome;
+    })
+    .catch((error) => {
+      console.error("Jev verdict failed", { error });
+    });
+
+  return {
+    snapshot: () => landed,
+    attachLater(id: string): void {
+      if (!pending || landed) return;
+      pending
+        .then((outcome) => attach(id, outcome))
+        .catch((error) => {
+          console.error("Failed to record Jev verdict", { error });
+        });
+    },
+  };
 }
 
 export async function gateSubmission({
@@ -32,6 +68,8 @@ export async function gateSubmission({
   deliver,
   classify = classifySubmission,
   record = submissionsRepo.recordSubmission,
+  attachJev = submissionsRepo.attachJev,
+  jev = judgeSubmissionWithJev,
   deadlineMs = CLASSIFY_DECISION_DEADLINE_MS,
 }: {
   source: SubmissionSource;
@@ -39,9 +77,37 @@ export async function gateSubmission({
   deliver: (opts: { subjectPrefix: string }) => Promise<void>;
   classify?: typeof classifySubmission;
   record?: RecordSubmission;
+  attachJev?: typeof submissionsRepo.attachJev;
+  jev?: typeof judgeSubmissionWithJev;
   deadlineMs?: number;
 }): Promise<{ delivered: boolean }> {
-  const classification = classify({ source, submission });
+  const startedAt = Date.now();
+  let llmLatencyMs: number | null = null;
+  const classification = classify({ source, submission }).then((verdict) => {
+    llmLatencyMs = Date.now() - startedAt;
+    return verdict;
+  });
+
+  const shadow = trackJev({
+    start: () => jev({ source, submission }),
+    attach: attachJev,
+  });
+
+  // A DB write here must never turn an already-delivered (or intentionally
+  // suppressed) submission into a 500 for the caller — that would make a
+  // Netlify/Cloudflare retry and send a duplicate email. Log and move on.
+  const persist: Persist = (input) => {
+    try {
+      const saved = record({
+        ...input,
+        llmLatencyMs,
+        jev: shadow.snapshot(),
+      });
+      shadow.attachLater(saved.id);
+    } catch (error) {
+      console.error("Failed to record submission", { error });
+    }
+  };
 
   let timer: ReturnType<typeof setTimeout>;
   const deadline = new Promise<{ kind: "deadline" }>((resolve) => {
@@ -61,7 +127,7 @@ export async function gateSubmission({
       source,
       submission,
       deliver,
-      record,
+      persist,
       verdict: winner.verdict,
     });
   }
@@ -75,7 +141,7 @@ export async function gateSubmission({
   } catch (error) {
     void classification
       .then((verdict) =>
-        safeRecord(record, {
+        persist({
           source,
           verdict: verdict.verdict,
           confidence: verdict.confidence,
@@ -96,7 +162,7 @@ export async function gateSubmission({
 
   void classification
     .then((verdict) => {
-      safeRecord(record, {
+      persist({
         source,
         verdict: verdict.verdict,
         confidence: verdict.confidence,
@@ -123,17 +189,17 @@ async function handleClassified({
   source,
   submission,
   deliver,
-  record,
+  persist,
   verdict,
 }: {
   source: SubmissionSource;
   submission: Record<string, string | number | null>;
   deliver: (opts: { subjectPrefix: string }) => Promise<void>;
-  record: RecordSubmission;
+  persist: Persist;
   verdict: ClassificationResult;
 }): Promise<{ delivered: boolean }> {
   if (shouldSuppress(verdict)) {
-    safeRecord(record, {
+    persist({
       source,
       verdict: verdict.verdict,
       confidence: verdict.confidence,
@@ -153,7 +219,7 @@ async function handleClassified({
   try {
     await deliver({ subjectPrefix });
   } catch (error) {
-    safeRecord(record, {
+    persist({
       source,
       verdict: verdict.verdict,
       confidence: verdict.confidence,
@@ -165,7 +231,7 @@ async function handleClassified({
     throw error;
   }
 
-  safeRecord(record, {
+  persist({
     source,
     verdict: verdict.verdict,
     confidence: verdict.confidence,

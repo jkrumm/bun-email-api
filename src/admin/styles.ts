@@ -232,7 +232,7 @@ export const STYLES = `
   .btn-primary { background: var(--vx-accent-fill); border-color: transparent; color: var(--vx-on-accent); }
   .btn-primary:hover { background: var(--vx-accent-fill-hover); }
 
-  .table-wrap { background: var(--vx-surface-panel); border-radius: var(--vx-radius-card); box-shadow: var(--vx-shadow-card); overflow: hidden; }
+  .table-wrap { background: var(--vx-surface-panel); border-radius: var(--vx-radius-card); box-shadow: var(--vx-shadow-card); overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; }
   thead th {
     height: 36px;

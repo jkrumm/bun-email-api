@@ -6,13 +6,41 @@ import type {
 } from "../../db/submissions";
 import { AdminLayout } from "../layout";
 import { Badge, EmptyState } from "../ui";
-import { formatListDateTime, formatPercent } from "../format";
+import { formatLatency, formatListDateTime, formatPercent } from "../format";
 
 const VERDICT_COLOR: Record<Verdict, string> = {
   legit: "good",
   marketing: "warn",
   spam: "bad",
 };
+
+function JevCell({ submission }: { submission: SubmissionRecord }) {
+  const { jev } = submission;
+  if (!jev) return <span className="page-subtitle">—</span>;
+  if (jev.verdict === null || jev.confidence === null) {
+    return (
+      <>
+        <Badge color="outline">error</Badge>
+        <p className="summary-line">{jev.error ?? "unknown error"}</p>
+      </>
+    );
+  }
+
+  const agrees = jev.verdict === submission.verdict;
+  return (
+    <>
+      <Badge color={VERDICT_COLOR[jev.verdict]}>{jev.verdict}</Badge>{" "}
+      <span className="mono">{formatPercent(jev.confidence)}</span>{" "}
+      <Badge color={agrees ? "good" : "warn"}>
+        {agrees ? "agrees" : "differs"}
+      </Badge>
+      <p className="summary-line mono">
+        LLM {formatLatency(submission.llmLatencyMs)} · Jev{" "}
+        {formatLatency(jev.latencyMs)}
+      </p>
+    </>
+  );
+}
 
 export interface SubmissionsFilters {
   verdict?: Verdict;
@@ -132,6 +160,7 @@ export function SubmissionsPage({
                   <th>Date</th>
                   <th>Source</th>
                   <th>Verdict</th>
+                  <th>Jev</th>
                   <th>Delivery</th>
                   <th>Reason</th>
                   <th>Details</th>
@@ -157,6 +186,9 @@ export function SubmissionsPage({
                           }}
                         />
                       </span>
+                    </td>
+                    <td>
+                      <JevCell submission={submission} />
                     </td>
                     <td>
                       <Badge color={submission.delivered ? "good" : "outline"}>

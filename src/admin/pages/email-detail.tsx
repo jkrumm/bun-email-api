@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import type { EmailWithEnrichment } from "../../db/emails";
+import type { EmailWithEnrichment, JevEnrichment } from "../../db/emails";
 import { AdminLayout } from "../layout";
 import { safeBackPath } from "../safe-back-path";
 import {
@@ -14,11 +14,41 @@ import {
   formatBytes,
   formatListDateTime,
   formatLongDateTime,
+  formatPercent,
   formatRelative,
 } from "../format";
 
 function joinOrDash(values: string[] | null): string {
   return values && values.length > 0 ? values.join(", ") : "—";
+}
+
+function JevBlock({ jev }: { jev: JevEnrichment }) {
+  return (
+    <>
+      <p className="card-title" style={{ marginTop: 12 }}>
+        Jev (shadow)
+      </p>
+      {jev.error !== null ? (
+        <p className="page-subtitle">Jev failed: {jev.error}</p>
+      ) : (
+        <p>
+          <span className="mono">
+            spam probability{" "}
+            {jev.spamProbability === null
+              ? "—"
+              : formatPercent(jev.spamProbability)}
+          </span>{" "}
+          <CategoryBadge category={jev.category} />{" "}
+          <span className="mono">
+            category confidence{" "}
+            {jev.categoryConfidence === null
+              ? "—"
+              : formatPercent(jev.categoryConfidence)}
+          </span>
+        </p>
+      )}
+    </>
+  );
 }
 
 export function EmailNotFoundPage({
@@ -167,6 +197,7 @@ export function EmailDetailPage({
                 : `Enrichment failed: ${enrichment.error ?? "unknown error"}`}
             </p>
           )}
+          {enrichment.jev ? <JevBlock jev={enrichment.jev} /> : null}
           <form
             method="post"
             action={`/admin/emails/${email.id}/enrich?back=${encodeURIComponent(back)}&view=${view}`}

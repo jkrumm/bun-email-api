@@ -1,23 +1,10 @@
 import { generateText, Output, type LanguageModel } from "ai";
 import { z } from "zod";
+import { CATEGORIES } from "./categories";
 import { getLlmConfig, getModel, getModelId } from "../llm/model";
 import type { EmailDirection, EnrichmentResult } from "../db/emails";
 
 const MAX_PROMPT_TEXT_LENGTH = 12_000;
-
-const CATEGORIES = [
-  "inquiry",
-  "customer",
-  "support",
-  "feedback",
-  "invoice",
-  "notification",
-  "newsletter",
-  "marketing",
-  "spam",
-  "personal",
-  "other",
-] as const;
 
 const enrichmentSchema = z.object({
   category: z.enum(CATEGORIES),
@@ -29,7 +16,7 @@ const enrichmentSchema = z.object({
   facts: z.array(z.object({ label: z.string(), value: z.string() })).max(8),
 });
 
-const SYSTEM_PROMPT = `You enrich emails for the owner's personal mail hub, which handles two sites:
+export const SYSTEM_PROMPT = `You enrich emails for the owner's personal mail hub, which handles two sites:
 
 1. Free-Planning-Poker.com ("fpp") — a free online planning-poker tool for agile teams.
 2. SY Serendipity ("sy-serendipity") — a private yacht charter.
@@ -81,6 +68,16 @@ function plainText(email: EmailForEnrichment): string {
     : raw;
 }
 
+export function buildEmailPayload(email: EmailForEnrichment) {
+  return {
+    direction: email.direction,
+    from: email.fromAddress,
+    to: email.toAddresses,
+    subject: email.subject,
+    text: plainText(email),
+  };
+}
+
 export async function enrichEmail({
   email,
   model,
@@ -94,13 +91,7 @@ export async function enrichEmail({
 
   try {
     const resolvedModel = model ?? getModel();
-    const payload = {
-      direction: email.direction,
-      from: email.fromAddress,
-      to: email.toAddresses,
-      subject: email.subject,
-      text: plainText(email),
-    };
+    const payload = buildEmailPayload(email);
 
     const result = await generateText({
       model: resolvedModel,

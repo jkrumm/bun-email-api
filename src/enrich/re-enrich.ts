@@ -1,5 +1,6 @@
 import type { EmailsRepo, EmailWithEnrichment } from "../db/emails";
 import type { EnrichEmailOutcome } from "./enrich-email";
+import { judgeEmailWithJev, startJevEnrichment } from "./jev-email";
 
 export type ReEnrichResult =
   { status: "ok"; outcome: EnrichEmailOutcome } | { status: "busy" };
@@ -31,10 +32,12 @@ export async function reEnrichEmail({
   emails,
   id,
   enrich,
+  judgeJev = judgeEmailWithJev,
 }: {
   emails: EmailsRepo;
   id: string;
   enrich: (email: EmailWithEnrichment) => Promise<EnrichEmailOutcome>;
+  judgeJev?: typeof judgeEmailWithJev;
 }): Promise<ReEnrichResult> {
   emails.resetEnrichment(id);
 
@@ -43,6 +46,7 @@ export async function reEnrichEmail({
   }
 
   const email = emails.getEmail(id)!;
+  startJevEnrichment({ emails, email, judge: judgeJev });
   const outcome = await enrich(email);
   applyEnrichmentOutcome({ emails, id, outcome });
 

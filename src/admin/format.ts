@@ -108,6 +108,11 @@ export function formatPercent(value: number): string {
   return `${Math.round(value * 100)} %`;
 }
 
+export function formatLatency(ms: number | null): string {
+  if (ms === null) return "—";
+  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${formatNumber(bytes)} B`;
 

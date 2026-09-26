@@ -263,3 +263,48 @@ describe("upsertEmail atomicity", () => {
     expect(email?.enrichment.attempts).toBe(0);
   });
 });
+
+describe("saveJevEnrichment", () => {
+  const jev = {
+    spamProbability: 0.1,
+    category: "inquiry",
+    categoryConfidence: 0.8,
+    latencyMs: 400,
+    model: "jev-test",
+    error: null,
+  };
+
+  test("round-trips through getEmail and listEmails", () => {
+    const emails = createEmailsRepo(openDatabase(":memory:"));
+    emails.upsertEmail({
+      id: "in_1",
+      direction: "inbound",
+      fromAddress: "a@example.com",
+      toAddresses: ["me@example.com"],
+      subject: "s",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    emails.saveJevEnrichment("in_1", jev);
+
+    expect(emails.getEmail("in_1")!.enrichment.jev).toEqual(jev);
+    expect(emails.listEmails().data[0]!.enrichment.jev).toEqual(jev);
+  });
+
+  test("creates the enrichment row when none exists instead of no-op'ing", () => {
+    const db = openDatabase(":memory:");
+    const emails = createEmailsRepo(db);
+    emails.upsertEmail({
+      id: "in_1",
+      direction: "inbound",
+      fromAddress: "a@example.com",
+      toAddresses: [],
+      subject: "s",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    db.run("DELETE FROM email_enrichments");
+
+    emails.saveJevEnrichment("in_1", jev);
+
+    expect(emails.getEmail("in_1")!.enrichment.jev).toEqual(jev);
+  });
+});

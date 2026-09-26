@@ -47,6 +47,20 @@ New env vars:
 - `BEA_LLM_API_KEY` — API key for that endpoint.
 - `BEA_LLM_MODEL` — model id to use. Pick a fast/cheap model — form submitters wait on this call synchronously (bounded only by a 30-minute hang guard, not a tight timeout).
 
+### Jev shadow mode
+
+[Jev](https://typesafe.ai) is a decision model (typed answers with calibrated probabilities, no text generation) run **in shadow mode** next to the LLM: the LLM classifier stays the only authority on drop/deliver. For every submission `src/spam/gate.ts` starts Jev (`src/spam/jev-judge.ts`, one `choice` question over `legit`/`spam`/`marketing` with the same criteria as the classifier prompt plus both site descriptions) concurrently with the classifier. Jev never delays or changes the decision and can't break the gate — it is not part of the 8s deadline race, and its verdict is written to the row once it lands (with the row if it is already in, otherwise attached afterwards). A Jev failure is stored as `jev_error`.
+
+Stored on each `submissions` row: `llm_latency_ms` (classifier latency, for comparison) and `jev_verdict`, `jev_confidence`, `jev_probabilities` (JSON), `jev_latency_ms`, `jev_model`, `jev_error`. All are `null` when Jev is disabled. The same fields are returned by `/api/submissions`; the admin Spam filter page shows Jev's verdict next to the LLM's with an agrees/differs marker, and the Overview shows the LLM↔Jev agreement rate and median latencies (also `jevComparison` in `/api/stats`).
+
+Inbound emails (`direction = inbound`, regardless of provider) get two Jev decisions, requested alongside the LLM enrichment in one request (fire-and-forget: the LLM result is saved without waiting for Jev, and Jev's decision is written whenever it lands): a `spam_probability` (yes/no question: unsolicited spam/phishing/cold marketing vs. anything a human wrote to the owner or transactional mail) and a `category` from the same set as the LLM enrichment, with confidence. Stored as separate `jev_*` columns on `email_enrichments` (`jev_spam_probability`, `jev_category`, `jev_category_confidence`, `jev_latency_ms`, `jev_model`, `jev_error`) and returned as `enrichment.jev` by `/api/emails` and `/api/emails/:id`; the LLM fields are untouched, and either side failing never fails the other.
+
+Env vars (all optional):
+
+- `BEA_JEV_API_KEY` — unset disables Jev everywhere, silently.
+- `BEA_JEV_BASE_URL` — default `https://api.beatapi.io` (official TypeSafe API: `https://api.typesafe.ai`, identical request shape).
+- `BEA_JEV_MODEL` — default `jev-1.13-free` (official API: `jev-latest`).
+
 ## Admin UI
 
 `GET /admin` — a server-rendered, zero-JS dashboard behind HTTP Basic auth (user `admin`), styled with `basalt-ui` tokens (automatic light/dark via `prefers-color-scheme`). Pages: Overview (stats, 14-day activity chart, category breakdown, needs-action and recently-blocked panels), Inbox (filterable/searchable list of every stored email, keyset-paginated), an email detail page (meta, AI enrichment, HTML/text content, a "Re-run AI" action), Spam filter (every judged submission), and Templates (previews of the registered email templates). All filtering happens through GET query params; the two POST actions (`Sync now`, `Re-run AI`) are guarded by a same-origin check. Dates are formatted in German (`Europe/Berlin`).

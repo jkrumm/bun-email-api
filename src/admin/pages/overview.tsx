@@ -1,5 +1,5 @@
 import type { EmailStats, EmailListItem } from "../../db/emails";
-import type { SubmissionRecord } from "../../db/submissions";
+import type { JevComparison, SubmissionRecord } from "../../db/submissions";
 import { AdminLayout } from "../layout";
 import {
   Badge,
@@ -12,6 +12,7 @@ import {
 import {
   formatChartDayLabel,
   formatDayKey,
+  formatLatency,
   formatListDateTime,
   formatLongDateTime,
   formatNumber,
@@ -159,6 +160,7 @@ function CategoryBreakdown({
 
 export function OverviewPage({
   stats,
+  jevComparison,
   needsAction,
   recentlyBlocked,
   lastSyncedAt,
@@ -167,6 +169,7 @@ export function OverviewPage({
   notice,
 }: {
   stats: EmailStats;
+  jevComparison: JevComparison;
   needsAction: EmailListItem[];
   recentlyBlocked: SubmissionRecord[];
   lastSyncedAt: string | null;
@@ -220,6 +223,18 @@ export function OverviewPage({
         <StatTile
           label="Spam blocked · 30d"
           value={formatNumber(stats.submissionsSuppressed)}
+        />
+        <StatTile
+          label="LLM ↔ Jev agreement"
+          value={
+            jevComparison.agreementRate === null
+              ? "—"
+              : `${formatPercent(jevComparison.agreementRate)} · ${formatNumber(jevComparison.compared)}`
+          }
+        />
+        <StatTile
+          label="Median latency LLM / Jev"
+          value={`${formatLatency(jevComparison.llmMedianLatencyMs)} / ${formatLatency(jevComparison.jevMedianLatencyMs)}`}
         />
       </div>
 

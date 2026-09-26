@@ -25,6 +25,17 @@ export interface EnrichmentResult {
   model: string;
 }
 
+// Jev's shadow decision on an inbound email. On failure the decision fields
+// are null and `error` carries the reason.
+export interface JevEnrichment {
+  spamProbability: number | null;
+  category: string | null;
+  categoryConfidence: number | null;
+  latencyMs: number;
+  model: string;
+  error: string | null;
+}
+
 export interface EnrichmentView {
   status: EnrichmentStatus;
   category: string | null;
@@ -37,6 +48,9 @@ export interface EnrichmentView {
   model: string | null;
   error: string | null;
   attempts: number;
+  // Null until Jev has judged this email (or when Jev is disabled / the
+  // email is outbound).
+  jev: JevEnrichment | null;
 }
 
 export interface UpsertEmailInput {
@@ -155,6 +169,12 @@ interface EnrichmentRow {
   model: string | null;
   error: string | null;
   attempts: number;
+  jev_spam_probability: number | null;
+  jev_category: string | null;
+  jev_category_confidence: number | null;
+  jev_latency_ms: number | null;
+  jev_model: string | null;
+  jev_error: string | null;
 }
 
 type EmailWithEnrichmentRow = EmailRow & Partial<EnrichmentRow>;
@@ -200,8 +220,26 @@ function toEnrichmentView(row: Partial<EnrichmentRow>): EnrichmentView {
     model: row.model ?? null,
     error: row.error ?? null,
     attempts: row.attempts ?? 0,
+    jev:
+      row.jev_model === null || row.jev_model === undefined
+        ? null
+        : {
+            spamProbability: row.jev_spam_probability ?? null,
+            category: row.jev_category ?? null,
+            categoryConfidence: row.jev_category_confidence ?? null,
+            latencyMs: row.jev_latency_ms ?? 0,
+            model: row.jev_model,
+            error: row.jev_error ?? null,
+          },
   };
 }
+
+const ENRICHMENT_COLUMNS = `en.status, en.category, en.priority, en.action_required,
+                en.summary, en.suggested_action, en.language, en.facts,
+                en.model, en.error, en.attempts,
+                en.jev_spam_probability, en.jev_category,
+                en.jev_category_confidence, en.jev_latency_ms,
+                en.jev_model, en.jev_error`;
 
 function toPlainSnippet(text: string | null, maxLength = 240): string {
   if (!text) return "";
@@ -334,9 +372,7 @@ export function createEmailsRepo(db: Database) {
   function getEmail(id: string): EmailWithEnrichment | null {
     const row = db
       .query<EmailWithEnrichmentRow, [string]>(
-        `SELECT e.*, en.status, en.category, en.priority, en.action_required,
-                en.summary, en.suggested_action, en.language, en.facts,
-                en.model, en.error, en.attempts
+        `SELECT e.*, ${ENRICHMENT_COLUMNS}
          FROM emails e
          LEFT JOIN email_enrichments en ON en.email_id = e.id
          WHERE e.id = ?`,
@@ -418,9 +454,7 @@ export function createEmailsRepo(db: Database) {
 
     const rows = db
       .query<EmailWithEnrichmentRow, (string | number)[]>(
-        `SELECT e.*, en.status, en.category, en.priority, en.action_required,
-                en.summary, en.suggested_action, en.language, en.facts,
-                en.model, en.error, en.attempts
+        `SELECT e.*, ${ENRICHMENT_COLUMNS}
          FROM emails e
          LEFT JOIN email_enrichments en ON en.email_id = e.id
          ${ftsJoin}
@@ -511,6 +545,34 @@ export function createEmailsRepo(db: Database) {
     syncFtsRow(id);
   }
 
+  // Upsert: Jev can land before (or without) the LLM enrichment, and must
+  // never silently no-op because the row isn't there yet.
+  function saveJevEnrichment(id: string, jev: JevEnrichment): void {
+    const params = [
+      jev.spamProbability,
+      jev.category,
+      jev.categoryConfidence,
+      jev.latencyMs,
+      jev.model,
+      jev.error,
+    ];
+    db.run(
+      `INSERT INTO email_enrichments (
+         email_id, status, attempts, updated_at,
+         jev_spam_probability, jev_category, jev_category_confidence,
+         jev_latency_ms, jev_model, jev_error
+       ) VALUES (?, 'pending', 0, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(email_id) DO UPDATE SET
+         jev_spam_probability = excluded.jev_spam_probability,
+         jev_category = excluded.jev_category,
+         jev_category_confidence = excluded.jev_category_confidence,
+         jev_latency_ms = excluded.jev_latency_ms,
+         jev_model = excluded.jev_model,
+         jev_error = excluded.jev_error`,
+      [id, new Date().toISOString(), ...params],
+    );
+  }
+
   function markEnrichmentFailed(id: string, error: string): void {
     db.run(
       `UPDATE email_enrichments SET
@@ -535,6 +597,12 @@ export function createEmailsRepo(db: Database) {
          error = NULL,
          attempts = 0,
          claimed_at = NULL,
+         jev_spam_probability = NULL,
+         jev_category = NULL,
+         jev_category_confidence = NULL,
+         jev_latency_ms = NULL,
+         jev_model = NULL,
+         jev_error = NULL,
          updated_at = ?
        WHERE email_id = ?
          AND (claimed_at IS NULL OR claimed_at < ?)`,
@@ -642,6 +710,7 @@ export function createEmailsRepo(db: Database) {
     listPendingEnrichment,
     claimEnrichment,
     saveEnrichment,
+    saveJevEnrichment,
     markEnrichmentFailed,
     resetEnrichment,
     knownEmailIds,

@@ -97,15 +97,42 @@ const migrations: Migration[] = [
       WHERE created_at LIKE '____-__-__ %';
     `,
   },
+  {
+    // Jev shadow-mode decisions, stored beside (never replacing) the LLM's.
+    version: 4,
+    up: `
+      ALTER TABLE submissions ADD COLUMN llm_latency_ms INTEGER;
+      ALTER TABLE submissions ADD COLUMN jev_verdict TEXT;
+      ALTER TABLE submissions ADD COLUMN jev_confidence REAL;
+      ALTER TABLE submissions ADD COLUMN jev_probabilities TEXT;
+      ALTER TABLE submissions ADD COLUMN jev_latency_ms INTEGER;
+      ALTER TABLE submissions ADD COLUMN jev_model TEXT;
+      ALTER TABLE submissions ADD COLUMN jev_error TEXT;
+
+      ALTER TABLE email_enrichments ADD COLUMN jev_spam_probability REAL;
+      ALTER TABLE email_enrichments ADD COLUMN jev_category TEXT;
+      ALTER TABLE email_enrichments ADD COLUMN jev_category_confidence REAL;
+      ALTER TABLE email_enrichments ADD COLUMN jev_latency_ms INTEGER;
+      ALTER TABLE email_enrichments ADD COLUMN jev_model TEXT;
+      ALTER TABLE email_enrichments ADD COLUMN jev_error TEXT;
+    `,
+  },
 ];
 
-export function runMigrations(db: Database): void {
+export function runMigrations(
+  db: Database,
+  { targetVersion = Infinity }: { targetVersion?: number } = {},
+): void {
   const { user_version: currentVersion } = db
     .query<{ user_version: number }, []>("PRAGMA user_version")
     .get()!;
 
   const pending = migrations
-    .filter((migration) => migration.version > currentVersion)
+    .filter(
+      (migration) =>
+        migration.version > currentVersion &&
+        migration.version <= targetVersion,
+    )
     .sort((a, b) => a.version - b.version);
 
   if (pending.length === 0) return;

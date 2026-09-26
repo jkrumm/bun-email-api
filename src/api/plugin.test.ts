@@ -224,3 +224,109 @@ describe("POST /api/emails/:id/enrich", () => {
     });
   });
 });
+
+describe("Jev shadow fields", () => {
+  const jev = {
+    verdict: "marketing" as const,
+    confidence: 0.9,
+    probabilities: { legit: 0.05, spam: 0.05, marketing: 0.9 },
+    latencyMs: 800,
+    model: "jev-test",
+    error: null,
+  };
+
+  test("GET /api/submissions and /api/stats expose Jev verdicts, agreement and latencies", async () => {
+    const { app, submissions } = testApp(API_KEY);
+    const base = {
+      source: "fpp" as const,
+      confidence: 0.9,
+      reason: "r",
+      model: "m",
+      delivered: true,
+      submission: {},
+    };
+    submissions.recordSubmission({
+      ...base,
+      verdict: "marketing",
+      llmLatencyMs: 2000,
+      jev,
+    });
+    submissions.recordSubmission({
+      ...base,
+      verdict: "legit",
+      llmLatencyMs: 4000,
+      jev,
+    });
+    submissions.recordSubmission({ ...base, verdict: "legit" });
+
+    const list = (await (
+      await app.handle(
+        new Request("http://localhost/api/submissions", {
+          headers: authHeaders(),
+        }),
+      )
+    ).json()) as {
+      data: {
+        jev: { verdict: string; latencyMs: number } | null;
+        llmLatencyMs: number | null;
+      }[];
+    };
+    const withJev = list.data.filter((row) => row.jev);
+    expect(withJev).toHaveLength(2);
+    expect(withJev[0]!.jev).toMatchObject({
+      verdict: "marketing",
+      latencyMs: 800,
+    });
+    expect(withJev[0]!.llmLatencyMs).not.toBeNull();
+
+    const stats = (await (
+      await app.handle(
+        new Request("http://localhost/api/stats", { headers: authHeaders() }),
+      )
+    ).json()) as { jevComparison: unknown };
+    expect(stats.jevComparison).toEqual({
+      compared: 2,
+      agreed: 1,
+      agreementRate: 0.5,
+      llmMedianLatencyMs: 3000,
+      jevMedianLatencyMs: 800,
+    });
+  });
+
+  test("GET /api/emails/:id exposes Jev's spam probability and category", async () => {
+    const { app, emails } = testApp(API_KEY);
+    emails.upsertEmail({
+      id: "in_1",
+      direction: "inbound",
+      fromAddress: "x@example.com",
+      toAddresses: ["me@example.com"],
+      subject: "Hi",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    emails.saveJevEnrichment("in_1", {
+      spamProbability: 0.96,
+      category: "marketing",
+      categoryConfidence: 0.9,
+      latencyMs: 700,
+      model: "jev-test",
+      error: null,
+    });
+
+    const body = (await (
+      await app.handle(
+        new Request("http://localhost/api/emails/in_1", {
+          headers: authHeaders(),
+        }),
+      )
+    ).json()) as { enrichment: { jev: unknown } };
+
+    expect(body.enrichment.jev).toEqual({
+      spamProbability: 0.96,
+      category: "marketing",
+      categoryConfidence: 0.9,
+      latencyMs: 700,
+      model: "jev-test",
+      error: null,
+    });
+  });
+});

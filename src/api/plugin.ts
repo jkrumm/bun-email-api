@@ -155,8 +155,13 @@ export function createApiRoutes({
     )
     .get(
       "/stats",
-      ({ query }) =>
-        emails.emailStats({ since: query.since ?? defaultSince() }),
+      ({ query }) => {
+        const since = query.since ?? defaultSince();
+        return {
+          ...emails.emailStats({ since }),
+          jevComparison: submissions.getJevComparison({ since }),
+        };
+      },
       { query: statsQuery },
     )
     .get(
