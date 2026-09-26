@@ -1,64 +1,59 @@
 import { describe, expect, test } from "bun:test";
+import { fakeJevModel, typesafeConfidence } from "../test/fake-jev";
 import { judgeSubmissionWithJev } from "./jev-judge";
 
-const config = { apiKey: "k", baseUrl: "https://jev.example.com", model: "m" };
+const config = { apiKey: "k", model: "typesafe-ai/jev" };
 
 describe("judgeSubmissionWithJev", () => {
   test("returns null when Jev is disabled", () => {
     expect(
-      judgeSubmissionWithJev({
-        source: "fpp",
-        submission: {},
-        config: null,
-      }),
+      judgeSubmissionWithJev({ source: "fpp", submission: {}, config: null }),
     ).toBeNull();
   });
 
-  test("maps the choice answer and sends site context in state", async () => {
-    let body: { state: Record<string, unknown> } | undefined;
-    const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
-      body = JSON.parse(init?.body as string);
-      return new Response(
-        JSON.stringify({
-          answers: {
-            verdict: {
-              type: "choice",
-              choice: "marketing",
-              probabilities: { legit: 0, spam: 0, marketing: 1 },
-              confidence: 1,
-            },
-          },
-        }),
-      );
-    }) as unknown as typeof fetch;
+  test("maps the choice answer, taking confidence from provider metadata, and sends site context in state", async () => {
+    const { model, calls } = fakeJevModel(() => ({
+      answers: {
+        verdict: {
+          type: "choice",
+          choice: "marketing",
+          probabilities: { legit: 0, spam: 0, marketing: 1 },
+        },
+      },
+      warnings: [],
+      providerMetadata: typesafeConfidence({ verdict: 0.93 }),
+    }));
 
     const outcome = await judgeSubmissionWithJev({
       source: "fpp",
       submission: { message: "SEO audit" },
       config,
-      fetchImpl,
+      model,
     })!;
 
     expect(outcome).toMatchObject({
       verdict: "marketing",
-      confidence: 1,
-      model: "m",
+      confidence: 0.93,
+      probabilities: { legit: 0, spam: 0, marketing: 1 },
+      model: "typesafe-ai/jev",
       error: null,
     });
     expect(outcome.latencyMs).toBeGreaterThanOrEqual(0);
-    expect(body?.state.source).toBe("fpp");
-    expect(JSON.stringify(body?.state.sites)).toContain("yacht charter");
+    const state = calls[0]!.state as Record<string, unknown>;
+    expect(state.source).toBe("fpp");
+    expect(JSON.stringify(state.sites)).toContain("yacht charter");
   });
 
   test("captures a failure as an error outcome instead of rejecting", async () => {
-    const fetchImpl = (async () =>
-      new Response("boom", { status: 529 })) as unknown as typeof fetch;
+    const { model } = fakeJevModel(() => {
+      throw new Error("gateway 529");
+    });
 
     const outcome = await judgeSubmissionWithJev({
       source: "sy-serendipity",
       submission: {},
       config,
-      fetchImpl,
+      model,
     })!;
 
     expect(outcome.verdict).toBeNull();

@@ -1,59 +1,67 @@
 import { describe, expect, test } from "bun:test";
+import { fakeJevModel, typesafeConfidence } from "../test/fake-jev";
 import { CATEGORIES } from "./categories";
 import { judgeEmailWithJev } from "./jev-email";
 
-const config = { apiKey: "k", baseUrl: "https://jev.example.com", model: "m" };
+const config = { apiKey: "k", model: "typesafe-ai/jev" };
+const payload = {
+  direction: "inbound" as const,
+  from: "a@example.com",
+  to: ["me@example.com"],
+  subject: "Charter",
+  text: "Hi",
+};
 
 describe("judgeEmailWithJev", () => {
   test("returns null when Jev is disabled", () => {
-    expect(judgeEmailWithJev({ payload: {}, config: null })).toBeNull();
+    expect(judgeEmailWithJev({ payload, config: null })).toBeNull();
   });
 
   test("asks spam + category (same category set as the LLM) in one call", async () => {
-    let body: { questions: Record<string, { criteria: object }> } | undefined;
-    const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
-      body = JSON.parse(init?.body as string);
-      return new Response(
-        JSON.stringify({
-          answers: {
-            spam: { type: "noul", noul: 0.04 },
-            category: {
-              type: "choice",
-              choice: "inquiry",
-              probabilities: { inquiry: 0.9 },
-              confidence: 0.9,
-            },
-          },
-        }),
-      );
-    }) as unknown as typeof fetch;
+    const { model, calls } = fakeJevModel(() => ({
+      answers: {
+        spam: { type: "boolean", probability: 0.04 },
+        category: {
+          type: "choice",
+          choice: "inquiry",
+          probabilities: Object.fromEntries(
+            CATEGORIES.map((category) => [
+              category,
+              category === "inquiry" ? 0.9 : 0.01,
+            ]),
+          ),
+        },
+      },
+      warnings: [],
+      providerMetadata: typesafeConfidence({ category: 0.88 }),
+    }));
 
     const outcome = await judgeEmailWithJev({
-      payload: { subject: "Charter" },
+      payload,
       config,
-      fetchImpl,
+      model,
     })!;
 
     expect(outcome).toMatchObject({
       spamProbability: 0.04,
       category: "inquiry",
-      categoryConfidence: 0.9,
+      categoryConfidence: 0.88,
       error: null,
     });
-    expect(Object.keys(body!.questions.category!.criteria)).toEqual([
+    expect(calls).toHaveLength(1);
+    const asked = calls[0]!.questions;
+    expect(asked.spam!.type).toBe("boolean");
+    expect(Object.keys(asked.category!.criteria as object)).toEqual([
       ...CATEGORIES,
     ]);
   });
 
   test("captures a failure as an error result instead of rejecting", async () => {
-    const fetchImpl = (async () =>
-      new Response("nope", { status: 401 })) as unknown as typeof fetch;
+    const { model } = fakeJevModel(() => {
+      throw new Error("gateway 401");
+    });
 
-    const outcome = await judgeEmailWithJev({
-      payload: {},
-      config,
-      fetchImpl,
-    })!;
+    const outcome = await judgeEmailWithJev({ payload, config, model })!;
 
     expect(outcome.spamProbability).toBeNull();
     expect(outcome.error).toContain("401");

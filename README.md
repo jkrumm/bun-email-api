@@ -57,9 +57,10 @@ Inbound emails (`direction = inbound`, regardless of provider) get two Jev decis
 
 Env vars (all optional):
 
-- `BEA_JEV_API_KEY` — unset disables Jev everywhere, silently.
-- `BEA_JEV_BASE_URL` — default `https://api.beatapi.io` (official TypeSafe API: `https://api.typesafe.ai`, identical request shape).
-- `BEA_JEV_MODEL` — default `jev-1.13-free` (official API: `jev-latest`).
+- `BEA_JEV_API_KEY` — Vercel AI Gateway key. Unset disables Jev everywhere, silently.
+- `BEA_JEV_MODEL` — gateway evaluation model id, default `typesafe-ai/jev`.
+
+Jev is called through the [Vercel AI Gateway](https://vercel.com/docs/ai-gateway) with the AI SDK's experimental `evaluate` (`src/llm/jev.ts`); no extra dependency. Choice confidence comes from the provider metadata Jev returns (falling back to the chosen option's probability).
 
 ## Admin UI
 

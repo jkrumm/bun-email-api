@@ -1,178 +1,138 @@
 import { describe, expect, test } from "bun:test";
+import { fakeJevModel, typesafeConfidence } from "../test/fake-jev";
 import { decide, decideShadow, type JevConfig } from "./jev";
 
-const config: JevConfig = {
-  apiKey: "test-key",
-  baseUrl: "https://jev.example.com/",
-  model: "jev-test",
-};
+const config: JevConfig = { apiKey: "test-key", model: "typesafe-ai/jev" };
 
 const questions = {
   verdict: {
     type: "choice",
+    instructions: "Classify",
     criteria: { legit: "genuine", spam: "junk" },
   },
-  is_spam: { type: "noul", instructions: "Is this spam?" },
-  tone: { type: "score", criteria: ["low", "mid", "high"] },
-} as const;
-
-const answers = {
-  verdict: {
-    type: "choice",
-    choice: "spam",
-    probabilities: { legit: 0.02, spam: 0.98 },
-    confidence: 0.97,
-  },
-  is_spam: { type: "noul", noul: 0.96 },
+  is_spam: { type: "boolean", instructions: "Is this spam?" },
   tone: {
     type: "score",
-    score: 2,
-    legend: { "1": "low", "2": "mid", "3": "high" },
-    probabilities: { "1": 0.1, "2": 0.8, "3": 0.1 },
-    confidence: 0.8,
+    instructions: "How pushy?",
+    criteria: ["low", "mid", "high"],
+  },
+} as const;
+
+const rawAnswers = {
+  verdict: {
+    type: "choice" as const,
+    choice: "spam",
+    probabilities: { legit: 0.02, spam: 0.98 },
+  },
+  is_spam: { type: "boolean" as const, probability: 0.96 },
+  tone: {
+    type: "score" as const,
+    score: 1,
+    probabilities: { "0": 0.1, "1": 0.8, "2": 0.1 },
   },
 };
 
-function fakeFetch(
-  respond: (request: { url: string; init: RequestInit }) => Response,
-) {
-  const calls: { url: string; init: RequestInit }[] = [];
-  const impl = (async (url: string | URL | Request, init?: RequestInit) => {
-    const call = { url: String(url), init: init ?? {} };
-    calls.push(call);
-    return respond(call);
-  }) as unknown as typeof fetch;
-  return { impl, calls };
-}
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), { status });
-}
-
 describe("decide", () => {
-  test("sends the documented request and returns typed answers", async () => {
-    const { impl, calls } = fakeFetch(() =>
-      json({
-        id: "d1",
-        model: "jev-test",
-        answers,
-        usage: { input_tokens: 120, output_tokens: 8 },
-      }),
-    );
+  test("passes state and questions to the model and returns typed answers", async () => {
+    const { model, calls } = fakeJevModel(() => ({
+      answers: rawAnswers,
+      warnings: [],
+      providerMetadata: typesafeConfidence({ verdict: 0.97 }),
+    }));
 
-    const result = await decide({
+    const { answers } = await decide({
       config,
-      fetchImpl: impl,
+      model,
       state: { subject: "SEO audit" },
       questions,
     });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.url).toBe("https://jev.example.com/v1/systemone");
-    expect(calls[0]!.init.method).toBe("POST");
-    expect(
-      (calls[0]!.init.headers as Record<string, string>).Authorization,
-    ).toBe("Bearer test-key");
-    expect(JSON.parse(calls[0]!.init.body as string)).toEqual({
-      model: "jev-test",
-      state: { subject: "SEO audit" },
-      questions,
-    });
+    expect(calls[0]!.state).toEqual({ subject: "SEO audit" });
+    expect(calls[0]!.questions).toEqual(questions);
+    expect(calls[0]!.abortSignal).toBeInstanceOf(AbortSignal);
 
-    // Types narrow by question type: choice → .choice, noul → .noul.
-    const choice: "legit" | "spam" = result.answers.verdict.choice;
+    // Types narrow by question type: choice → .choice, boolean → .probability.
+    const choice: "legit" | "spam" = answers.verdict.choice;
     expect(choice).toBe("spam");
-    expect(result.answers.verdict.confidence).toBe(0.97);
-    expect(result.answers.is_spam.noul).toBe(0.96);
-    expect(result.answers.tone.score).toBe(2);
-    expect(result.usage).toEqual({ inputTokens: 120, outputTokens: 8 });
+    expect(answers.verdict.confidence).toBe(0.97);
+    expect(answers.is_spam.probability).toBe(0.96);
+    expect(answers.tone.score).toBe(1);
+  });
+
+  test("falls back to the choice's probability when no confidence is reported", async () => {
+    for (const providerMetadata of [
+      undefined,
+      typesafeConfidence({ other: 0.5 }),
+      typesafeConfidence({ verdict: 1.5 }),
+    ]) {
+      const { model } = fakeJevModel(() => ({
+        answers: { verdict: rawAnswers.verdict },
+        warnings: [],
+        providerMetadata,
+      }));
+
+      const { answers } = await decide({
+        config,
+        model,
+        state: "x",
+        questions: { verdict: questions.verdict },
+      });
+
+      expect(answers.verdict.confidence).toBe(0.98);
+    }
+  });
+
+  test("throws when a choice has neither confidence nor probabilities", async () => {
+    const { model } = fakeJevModel(() => ({
+      answers: { verdict: { type: "choice", choice: "spam" } },
+      warnings: [],
+    }));
+
+    await expect(
+      decide({
+        config,
+        model,
+        state: "x",
+        questions: { verdict: questions.verdict },
+      }),
+    ).rejects.toThrow('no confidence for "verdict"');
   });
 
   test("throws when Jev is not configured", async () => {
-    const { impl, calls } = fakeFetch(() => json({}));
+    const { model, calls } = fakeJevModel(() => ({
+      answers: {},
+      warnings: [],
+    }));
+
     await expect(
-      decide({ config: null, fetchImpl: impl, state: "x", questions }),
+      decide({ config: null, model, state: "x", questions }),
     ).rejects.toThrow("Jev not configured");
     expect(calls).toHaveLength(0);
   });
 
-  test("throws with the status on a non-2xx response", async () => {
-    const { impl } = fakeFetch(() => json({ error: "rate limited" }, 429));
-    await expect(
-      decide({ config, fetchImpl: impl, state: "x", questions }),
-    ).rejects.toThrow("Jev request failed: 429");
-  });
+  test("propagates a model failure", async () => {
+    const { model } = fakeJevModel(() => {
+      throw new Error("gateway 529");
+    });
 
-  test("rejects a malformed response body", async () => {
-    const { impl } = fakeFetch(() => json({ answers: { verdict: {} } }));
     await expect(
-      decide({ config, fetchImpl: impl, state: "x", questions }),
-    ).rejects.toThrow();
-  });
-
-  test("rejects an answer whose type differs from the question", async () => {
-    const { impl } = fakeFetch(() =>
-      json({ answers: { ...answers, is_spam: answers.verdict } }),
-    );
-    await expect(
-      decide({ config, fetchImpl: impl, state: "x", questions }),
-    ).rejects.toThrow('"is_spam" is choice, expected noul');
-  });
-
-  test("rejects a choice outside the question's options", async () => {
-    const { impl } = fakeFetch(() =>
-      json({
-        answers: { ...answers, verdict: { ...answers.verdict, choice: "?" } },
+      decide({
+        config,
+        model,
+        state: "x",
+        questions: { is_spam: questions.is_spam },
+        // SDK retries transient failures; a plain Error is not retried.
       }),
-    );
-    await expect(
-      decide({ config, fetchImpl: impl, state: "x", questions }),
-    ).rejects.toThrow('unknown option "?"');
-  });
-
-  test("rejects a response missing a requested answer", async () => {
-    const { impl } = fakeFetch(() =>
-      json({ answers: { verdict: answers.verdict } }),
-    );
-    await expect(
-      decide({ config, fetchImpl: impl, state: "x", questions }),
-    ).rejects.toThrow('missing answer "is_spam"');
-  });
-
-  test("rejects probabilities and confidence outside 0..1", async () => {
-    for (const bad of [
-      { ...answers.verdict, confidence: 1.5 },
-      { ...answers.verdict, probabilities: { legit: -0.1, spam: 1.1 } },
-    ]) {
-      const { impl } = fakeFetch(() =>
-        json({ answers: { ...answers, verdict: bad } }),
-      );
-      await expect(
-        decide({ config, fetchImpl: impl, state: "x", questions }),
-      ).rejects.toThrow();
-    }
-  });
-
-  test("rejects an inherited property name as a choice", async () => {
-    const { impl } = fakeFetch(() =>
-      json({
-        answers: {
-          ...answers,
-          verdict: { ...answers.verdict, choice: "toString" },
-        },
-      }),
-    );
-    await expect(
-      decide({ config, fetchImpl: impl, state: "x", questions }),
-    ).rejects.toThrow('unknown option "toString"');
+    ).rejects.toThrow("gateway 529");
   });
 });
 
 describe("decideShadow", () => {
-  const pick = ({ is_spam }: { is_spam: { noul: number } }) => ({
-    spam: is_spam.noul,
-  });
   const shadowQuestions = { is_spam: questions.is_spam };
+  const pick = ({ is_spam }: { is_spam: { probability: number } }) => ({
+    spam: is_spam.probability,
+  });
 
   test("returns null when disabled", () => {
     expect(
@@ -188,7 +148,10 @@ describe("decideShadow", () => {
   });
 
   test("maps answers on success and folds failures into `error`", async () => {
-    const ok = fakeFetch(() => json({ answers: { is_spam: answers.is_spam } }));
+    const ok = fakeJevModel(() => ({
+      answers: { is_spam: rawAnswers.is_spam },
+      warnings: [],
+    }));
     const success = await decideShadow({
       label: "t",
       state: "x",
@@ -196,15 +159,17 @@ describe("decideShadow", () => {
       pick,
       empty: { spam: null },
       config,
-      fetchImpl: ok.impl,
+      model: ok.model,
     })!;
     expect(success).toMatchObject({
       spam: 0.96,
-      model: "jev-test",
+      model: "typesafe-ai/jev",
       error: null,
     });
 
-    const bad = fakeFetch(() => json({}, 529));
+    const bad = fakeJevModel(() => {
+      throw new Error("gateway 529");
+    });
     const failure = await decideShadow({
       label: "t",
       state: "x",
@@ -212,9 +177,9 @@ describe("decideShadow", () => {
       pick,
       empty: { spam: null },
       config,
-      fetchImpl: bad.impl,
+      model: bad.model,
     })!;
     expect(failure.spam).toBeNull();
-    expect(failure.error).toContain("529");
+    expect(failure.error).toContain("gateway 529");
   });
 });

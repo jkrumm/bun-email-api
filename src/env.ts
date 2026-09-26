@@ -18,8 +18,7 @@ export const envSchema = z
     BEA_LLM_MODEL: z.string().optional(),
     // Jev decision model (shadow mode). Unset key -> Jev is disabled everywhere.
     BEA_JEV_API_KEY: z.string().optional(),
-    BEA_JEV_BASE_URL: z.string().default("https://api.beatapi.io"),
-    BEA_JEV_MODEL: z.string().default("jev-1.13-free"),
+    BEA_JEV_MODEL: z.string().default("typesafe-ai/jev"),
     BEA_ADMIN_PASSWORD: z.string().optional(),
     // Full-access key for the admin UI's list/get calls; the send path keeps
     // the sending-only BEA_RESEND_API_KEY.

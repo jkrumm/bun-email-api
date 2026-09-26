@@ -29,23 +29,23 @@ export function judgeSubmissionWithJev({
   source,
   submission,
   config,
-  fetchImpl,
+  model,
 }: {
   source: SubmissionSource;
   submission: Record<string, string | number | null>;
   config?: JevConfig | null;
-  fetchImpl?: typeof fetch;
+  model?: Parameters<typeof decideShadow>[0]["model"];
 }): Promise<JevSubmissionView> | null {
   return decideShadow({
     label: "submission",
     config,
-    fetchImpl,
+    model,
     state: { sites: SITES, source, submission },
     questions: { verdict: JEV_VERDICT_QUESTION },
     pick: ({ verdict }) => ({
       verdict: verdict.choice,
       confidence: verdict.confidence,
-      probabilities: verdict.probabilities,
+      probabilities: verdict.probabilities ?? null,
     }),
     empty: { verdict: null, confidence: null, probabilities: null },
   });
