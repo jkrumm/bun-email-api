@@ -36,6 +36,9 @@ interface JevDecision<Questions extends Record<string, EvaluationQuestion>> {
 // Single model requests get a hang guard, never a tight timeout (house rule,
 // see src/spam/classify.ts).
 const JEV_HANG_GUARD_MS = 30 * 60_000;
+// Jev's upstream intermittently answers 429 "high demand"; every Jev call is
+// detached shadow work, so riding out ~1 min of SDK backoff costs nothing.
+const JEV_MAX_RETRIES = 5;
 
 const confidenceSchema = z.object({
   confidence: z.record(z.string(), z.number().min(0).max(1)),
@@ -69,6 +72,7 @@ export async function decide<
       createGateway({ apiKey: config.apiKey }).evaluation(config.model),
     state,
     questions,
+    maxRetries: JEV_MAX_RETRIES,
     abortSignal: AbortSignal.timeout(JEV_HANG_GUARD_MS),
   });
 
