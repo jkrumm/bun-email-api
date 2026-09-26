@@ -308,3 +308,72 @@ describe("saveJevEnrichment", () => {
     expect(emails.getEmail("in_1")!.enrichment.jev).toEqual(jev);
   });
 });
+
+describe("insertOnly upserts", () => {
+  test("onto an existing Resend row leaves its content and provider untouched", () => {
+    const emails = repo();
+    emails.upsertEmail(
+      baseEmail({
+        id: "shared",
+        direction: "inbound",
+        subject: "Original",
+        html: "<p>original</p>",
+        text: "original",
+      }),
+    );
+
+    emails.upsertEmail(
+      baseEmail({
+        id: "shared",
+        direction: "inbound",
+        subject: "Overwritten?",
+        html: "<p>evil</p>",
+        text: "evil",
+        provider: "imap",
+        mailbox: "INBOX",
+        messageId: "<m@x>",
+        contentHash: "abc",
+        insertOnly: true,
+      }),
+    );
+
+    const row = emails.getEmail("shared");
+    expect(row).toMatchObject({
+      subject: "Original",
+      html: "<p>original</p>",
+      text: "original",
+      provider: "resend",
+    });
+    // Only the bookkeeping fields are filled in.
+    expect(row).toMatchObject({ mailbox: "INBOX", messageId: "<m@x>" });
+    expect(emails.getContentHash("shared")).toBe("abc");
+  });
+
+  test("a second insertOnly upsert never changes stored bookkeeping either", () => {
+    const emails = repo();
+    const first = baseEmail({
+      id: "imap:1",
+      provider: "imap",
+      mailbox: "INBOX",
+      messageId: "<a@x>",
+      contentHash: "hash-1",
+      insertOnly: true,
+    });
+    emails.upsertEmail(first);
+
+    emails.upsertEmail({
+      ...first,
+      subject: "Other",
+      mailbox: "Spam",
+      messageId: "<b@x>",
+      contentHash: "hash-2",
+    });
+
+    expect(emails.getEmail("imap:1")).toMatchObject({
+      subject: "Hello",
+      mailbox: "INBOX",
+      messageId: "<a@x>",
+    });
+    expect(emails.getContentHash("imap:1")).toBe("hash-1");
+  });
+});

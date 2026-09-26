@@ -123,6 +123,17 @@ export function EmailDetailPage({
             <dd>{email.direction}</dd>
             <dt>Source</dt>
             <dd>{email.source ?? "—"}</dd>
+            <dt>Provider</dt>
+            <dd>
+              {email.provider}
+              {email.mailbox ? ` · ${email.mailbox}` : ""}
+            </dd>
+            {email.messageId ? (
+              <>
+                <dt>Message-ID</dt>
+                <dd className="wrap-anywhere">{email.messageId}</dd>
+              </>
+            ) : null}
             {email.lastEvent ? (
               <>
                 <dt>Status</dt>

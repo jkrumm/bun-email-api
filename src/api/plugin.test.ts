@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createApiRoutes } from "./plugin";
 import { openDatabase } from "../db/client";
 import { createEmailsRepo } from "../db/emails";
+import { createImapStateRepo } from "../db/imap-state";
 import { createSubmissionsRepo } from "../db/submissions";
 
 const API_KEY = "local-api-key-1234567";
@@ -18,6 +19,7 @@ function testApp(apiKey: string | undefined) {
     apiKey,
     emails,
     submissions,
+    imapState: createImapStateRepo(db),
     runSync: async () => ({
       outbound: { new: 0, updated: 0 },
       inbound: { new: 0 },
@@ -26,6 +28,22 @@ function testApp(apiKey: string | undefined) {
   });
 
   return { app, emails, submissions };
+}
+
+function testAppWithDb(apiKey: string | undefined) {
+  const db = openDatabase(":memory:");
+  const app = createApiRoutes({
+    apiKey,
+    emails: createEmailsRepo(db),
+    submissions: createSubmissionsRepo(db),
+    imapState: createImapStateRepo(db),
+    runSync: async () => ({
+      outbound: { new: 0, updated: 0 },
+      inbound: { new: 0 },
+      errors: [],
+    }),
+  });
+  return { app, db };
 }
 
 function authHeaders(key = API_KEY) {
@@ -96,6 +114,65 @@ describe("GET /api/emails", () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as { data: { id: string }[] };
     expect(body.data.map((e) => e.id)).toEqual(["in_1"]);
+  });
+
+  test("provider and mailbox filters narrow the list and are returned", async () => {
+    const { app, emails } = testApp(API_KEY);
+    const base = {
+      direction: "inbound" as const,
+      fromAddress: "guest@example.com",
+      toAddresses: ["hello@example.com"],
+      subject: "Hi",
+    };
+    emails.upsertEmail({
+      ...base,
+      id: "resend_1",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    emails.upsertEmail({
+      ...base,
+      id: "imap_inbox",
+      provider: "imap",
+      mailbox: "INBOX",
+      messageId: "<a@x>",
+      createdAt: "2026-01-02T00:00:00.000Z",
+    });
+    emails.upsertEmail({
+      ...base,
+      id: "imap_spam",
+      provider: "imap",
+      mailbox: "Spam",
+      createdAt: "2026-01-03T00:00:00.000Z",
+    });
+
+    const get = async (query: string) => {
+      const response = await app.handle(
+        new Request(`http://localhost/api/emails?${query}`, {
+          headers: authHeaders(),
+        }),
+      );
+      expect(response.status).toBe(200);
+      return (await response.json()) as {
+        data: { id: string; provider: string; mailbox: string | null }[];
+      };
+    };
+
+    expect((await get("provider=resend")).data.map((e) => e.id)).toEqual([
+      "resend_1",
+    ]);
+    const imap = await get("provider=imap");
+    expect(imap.data.map((e) => e.id)).toEqual(["imap_spam", "imap_inbox"]);
+    expect(imap.data[1]).toMatchObject({ provider: "imap", mailbox: "INBOX" });
+    expect(
+      (await get("provider=imap&mailbox=Spam")).data.map((e) => e.id),
+    ).toEqual(["imap_spam"]);
+
+    const invalid = await app.handle(
+      new Request("http://localhost/api/emails?provider=smtp", {
+        headers: authHeaders(),
+      }),
+    );
+    expect(invalid.status).toBe(422);
   });
 
   test("no filters returns every direction and enrichment status", async () => {
@@ -328,5 +405,23 @@ describe("Jev shadow fields", () => {
       model: "jev-test",
       error: null,
     });
+  });
+});
+
+describe("GET /api/stats IMAP health", () => {
+  test("exposes per-mailbox ingest health", async () => {
+    const { app, db } = testAppWithDb(API_KEY);
+    createImapStateRepo(db).recordError("INBOX", "connect: ECONNREFUSED");
+
+    const response = await app.handle(
+      new Request("http://localhost/api/stats", { headers: authHeaders() }),
+    );
+
+    const body = (await response.json()) as {
+      imap: { mailbox: string; lastError: string | null }[];
+    };
+    expect(body.imap).toMatchObject([
+      { mailbox: "INBOX", lastError: "connect: ECONNREFUSED" },
+    ]);
   });
 });

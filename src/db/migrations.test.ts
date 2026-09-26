@@ -19,6 +19,7 @@ describe("runMigrations", () => {
     expect(tables).toContain("submissions");
     expect(tables).toContain("emails_fts");
     expect(tables).toContain("sync_state");
+    expect(tables).toContain("imap_sync_state");
   });
 
   test("is idempotent — running twice does not throw or duplicate schema", () => {
@@ -115,5 +116,22 @@ describe("migration 4", () => {
       jev_model: null,
       jev_error: null,
     });
+  });
+});
+
+describe("migration 5", () => {
+  test("backfills existing rows as provider resend", () => {
+    const db = new Database(":memory:");
+    runMigrations(db);
+    db.run(
+      `INSERT INTO emails (id, direction, from_address, to_addresses, subject, created_at, attachments, synced_at)
+       VALUES ('e1', 'inbound', 'a@example.com', '[]', 's', '2026-09-15T07:15:57.115Z', '[]', '2026-09-15T08:00:00.000Z')`,
+    );
+    const row = db
+      .query<{ provider: string; mailbox: string | null }, []>(
+        "SELECT provider, mailbox FROM emails",
+      )
+      .get()!;
+    expect(row).toEqual({ provider: "resend", mailbox: null });
   });
 });

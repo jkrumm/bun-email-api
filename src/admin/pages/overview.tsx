@@ -1,4 +1,5 @@
 import type { EmailStats, EmailListItem } from "../../db/emails";
+import type { ImapMailboxHealth } from "../../db/imap-state";
 import type { JevComparison, SubmissionRecord } from "../../db/submissions";
 import { AdminLayout } from "../layout";
 import {
@@ -16,6 +17,7 @@ import {
   formatListDateTime,
   formatLongDateTime,
   formatNumber,
+  imapTileValue,
   formatPercent,
   formatRelative,
 } from "../format";
@@ -158,12 +160,24 @@ function CategoryBreakdown({
   );
 }
 
+function ImapHealthTile({
+  health,
+  now,
+}: {
+  health: ImapMailboxHealth[];
+  now: Date;
+}) {
+  const { value, bar, title } = imapTileValue(health, now);
+  return <StatTile label="IMAP ingest" title={title} value={value} bar={bar} />;
+}
+
 export function OverviewPage({
   stats,
   jevComparison,
   needsAction,
   recentlyBlocked,
   lastSyncedAt,
+  imapHealth = [],
   needsActionCount,
   now,
   notice,
@@ -173,6 +187,7 @@ export function OverviewPage({
   needsAction: EmailListItem[];
   recentlyBlocked: SubmissionRecord[];
   lastSyncedAt: string | null;
+  imapHealth?: ImapMailboxHealth[];
   needsActionCount: number;
   now: Date;
   notice?: { text: string; error?: boolean } | null;
@@ -232,6 +247,9 @@ export function OverviewPage({
               : `${formatPercent(jevComparison.agreementRate)} · ${formatNumber(jevComparison.compared)}`
           }
         />
+        {imapHealth.length > 0 ? (
+          <ImapHealthTile health={imapHealth} now={now} />
+        ) : null}
         <StatTile
           label="Median latency LLM / Jev"
           value={`${formatLatency(jevComparison.llmMedianLatencyMs)} / ${formatLatency(jevComparison.jevMedianLatencyMs)}`}

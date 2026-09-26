@@ -3,19 +3,20 @@ import { timingSafeEqualStrings } from "../auth";
 import { env } from "../env";
 import { enrichEmail } from "../enrich/enrich-email";
 import { reEnrichEmail } from "../enrich/re-enrich";
-import { emailsRepo, submissionsRepo } from "../db";
-import { runSyncNow } from "../sync/resend-sync";
+import { emailsRepo, imapStateRepo, submissionsRepo } from "../db";
+import { runSyncNow } from "../sync";
 import type {
   EmailDirection,
   EmailsRepo,
   EnrichmentStatus,
 } from "../db/emails";
+import type { ImapStateRepo } from "../db/imap-state";
 import type {
   SubmissionsRepo,
   SubmissionSource,
   Verdict,
 } from "../db/submissions";
-import type { SyncSummary } from "../sync/resend-sync";
+import type { SyncSummary } from "../sync/types";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60_000;
 
@@ -28,6 +29,8 @@ const emailsListQuery = t.Object({
   // Comma-separated, e.g. ?category=inquiry,customer
   category: t.Optional(t.String()),
   source: t.Optional(t.String()),
+  provider: t.Optional(t.Union([t.Literal("resend"), t.Literal("imap")])),
+  mailbox: t.Optional(t.String()),
   from: t.Optional(t.String()),
   to: t.Optional(t.String()),
   q: t.Optional(t.String()),
@@ -63,11 +66,13 @@ export function createApiRoutes({
   apiKey,
   emails,
   submissions,
+  imapState,
   runSync,
 }: {
   apiKey: string | undefined;
   emails: EmailsRepo;
   submissions: SubmissionsRepo;
+  imapState: ImapStateRepo;
   runSync: () => Promise<SyncSummary | { busy: true }>;
 }) {
   const configured = apiKey !== undefined;
@@ -101,6 +106,8 @@ export function createApiRoutes({
             .map((value) => value.trim())
             .filter(Boolean),
           source: query.source,
+          provider: query.provider,
+          mailbox: query.mailbox,
           from: query.from,
           to: query.to,
           q: query.q,
@@ -160,6 +167,8 @@ export function createApiRoutes({
         return {
           ...emails.emailStats({ since }),
           jevComparison: submissions.getJevComparison({ since }),
+          // Per-mailbox IMAP health, so a dead Bridge is visible.
+          imap: imapState.listHealth(),
         };
       },
       { query: statsQuery },
@@ -190,5 +199,6 @@ export const apiRoutes = createApiRoutes({
   apiKey: env.BEA_API_KEY,
   emails: emailsRepo,
   submissions: submissionsRepo,
+  imapState: imapStateRepo,
   runSync: runSyncNow,
 });

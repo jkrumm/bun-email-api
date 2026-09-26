@@ -1,8 +1,8 @@
 import { Elysia, redirect } from "elysia";
 import { timingSafeEqualStrings } from "../auth";
 import { env } from "../env";
-import { emailsRepo, submissionsRepo } from "../db";
-import { runSyncNow } from "../sync/resend-sync";
+import { emailsRepo, imapStateRepo, submissionsRepo } from "../db";
+import { runSyncNow } from "../sync";
 import { enrichEmail, type EnrichEmailOutcome } from "../enrich/enrich-email";
 import { reEnrichEmail } from "../enrich/re-enrich";
 import { safeBackPath } from "./safe-back-path";
@@ -11,12 +11,13 @@ import type {
   EmailsRepo,
   EmailWithEnrichment,
 } from "../db/emails";
+import type { ImapStateRepo } from "../db/imap-state";
 import type {
   SubmissionsRepo,
   SubmissionSource,
   Verdict,
 } from "../db/submissions";
-import type { SyncSummary } from "../sync/resend-sync";
+import type { SyncSummary } from "../sync/types";
 import { emailRegistry } from "../emails/registry";
 import { berlinDayBoundaryToUtcIso } from "./format";
 import { APP_CSS, getFontAsset } from "./assets";
@@ -139,6 +140,7 @@ export function createAdminRoutes({
   password,
   emails,
   submissions,
+  imapState,
   runSync,
   enrich,
   now,
@@ -146,6 +148,7 @@ export function createAdminRoutes({
   password: string | undefined;
   emails: EmailsRepo;
   submissions: SubmissionsRepo;
+  imapState: ImapStateRepo;
   runSync: () => Promise<SyncSummary | { busy: true }>;
   enrich: (email: EmailWithEnrichment) => Promise<EnrichEmailOutcome>;
   now?: () => Date;
@@ -204,6 +207,7 @@ export function createAdminRoutes({
             submissions.listSubmissions({ delivered: false, limit: 5 }).data
           }
           lastSyncedAt={emails.lastSyncedAt()}
+          imapHealth={imapState.listHealth()}
           needsActionCount={emails.actionRequiredCount()}
           now={time}
           notice={noticeFor(query)}
@@ -217,6 +221,11 @@ export function createAdminRoutes({
           : undefined;
       const category = query.category || undefined;
       const source = query.source || undefined;
+      const provider =
+        query.provider === "resend" || query.provider === "imap"
+          ? query.provider
+          : undefined;
+      const mailbox = query.mailbox || undefined;
       const actionRequired = truthy(query.action_required) || undefined;
       const from = query.from || undefined;
       const to = query.to || undefined;
@@ -226,6 +235,8 @@ export function createAdminRoutes({
         direction,
         category: category ? [category] : undefined,
         source,
+        provider,
+        mailbox,
         q: query.q || undefined,
         since: from ? berlinDayBoundaryToUtcIso(from, "start") : undefined,
         until: to ? berlinDayBoundaryToUtcIso(to, "end") : undefined,
@@ -241,6 +252,8 @@ export function createAdminRoutes({
             direction,
             category,
             source,
+            provider,
+            mailbox,
             actionRequired,
             from,
             to,
@@ -356,7 +369,8 @@ export function createAdminRoutes({
         return redirect(withParam(back, "notice", "sync-running"), 303);
       }
 
-      const newCount = result.outbound.new + result.inbound.new;
+      const newCount =
+        result.outbound.new + result.inbound.new + (result.imap?.new ?? 0);
       const withNotice = withParam(back, "notice", "synced");
       return redirect(withParam(withNotice, "new", String(newCount)), 303);
     })
@@ -410,6 +424,7 @@ export const adminRoutes = createAdminRoutes({
   password: env.BEA_ADMIN_PASSWORD,
   emails: emailsRepo,
   submissions: submissionsRepo,
+  imapState: imapStateRepo,
   runSync: runSyncNow,
   enrich: (email) => enrichEmail({ email }),
 });

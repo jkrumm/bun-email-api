@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createAdminRoutes } from "./plugin";
 import { openDatabase } from "../db/client";
 import { createEmailsRepo } from "../db/emails";
+import { createImapStateRepo } from "../db/imap-state";
 import { createSubmissionsRepo } from "../db/submissions";
 import { emailRegistry } from "../emails/registry";
 import type { EnrichEmailOutcome } from "../enrich/enrich-email";
@@ -44,6 +45,7 @@ function testApp(overrides: { password?: string | undefined } = {}) {
     password: "password" in overrides ? overrides.password : PASSWORD,
     emails,
     submissions,
+    imapState: createImapStateRepo(db),
     runSync: async () => ({
       outbound: { new: 1, updated: 0 },
       inbound: { new: 2 },
@@ -157,6 +159,39 @@ describe("admin emails list", () => {
     const html = await response.text();
     expect(html).toContain("Yacht charter request");
     expect(html).not.toContain("Thanks for reaching out");
+  });
+
+  test("provider/mailbox filters and badges render", async () => {
+    const { app, emails } = testApp();
+    emails.upsertEmail({
+      id: "imap_1",
+      direction: "inbound",
+      fromAddress: "ada@example.com",
+      toAddresses: ["hello@example.com"],
+      subject: "From the human inbox",
+      createdAt: FIXED_NOW.toISOString(),
+      provider: "imap",
+      mailbox: "Spam",
+    });
+    emails.upsertEmail({
+      id: "resend_1",
+      direction: "inbound",
+      fromAddress: "guest@example.com",
+      toAddresses: ["charter@example.com"],
+      subject: "From a form",
+      createdAt: FIXED_NOW.toISOString(),
+    });
+
+    const response = await app.handle(
+      new Request("http://localhost/admin/emails?provider=imap&mailbox=Spam", {
+        headers: { authorization: basicAuth("admin", PASSWORD) },
+      }),
+    );
+
+    const html = await response.text();
+    expect(html).toContain("From the human inbox");
+    expect(html).not.toContain("From a form");
+    expect(html).toContain("imap · Spam");
   });
 
   test("renders German list dates", async () => {

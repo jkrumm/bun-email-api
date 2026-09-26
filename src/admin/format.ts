@@ -1,3 +1,4 @@
+import type { ImapMailboxHealth } from "../db/imap-state";
 const TIME_ZONE = "Europe/Berlin";
 
 const dayKeyFormatter = new Intl.DateTimeFormat("en-CA", {
@@ -171,4 +172,41 @@ export function berlinDayBoundaryToUtcIso(
 
   const offsetMinutes = berlinOffsetMinutes(new Date(naiveUtcMs));
   return new Date(naiveUtcMs - offsetMinutes * 60_000).toISOString();
+}
+
+// Summary of per-mailbox IMAP health for the overview tile: errors outrank
+// warnings, which outrank a plain "last ok" timestamp.
+export function imapTileValue(
+  health: ImapMailboxHealth[],
+  now: Date,
+): { value: string; bar: "good" | "warn" | "bad"; title: string } {
+  const failing = health.filter((mailbox) => mailbox.lastError);
+  const degraded = health.filter(
+    (mailbox) => !mailbox.lastError && mailbox.lastWarning,
+  );
+  const names = (list: ImapMailboxHealth[]) =>
+    list.map((mailbox) => mailbox.mailbox).join(", ");
+
+  const title = [
+    ...failing.map((mailbox) => `${mailbox.mailbox}: ${mailbox.lastError}`),
+    ...degraded.map((mailbox) => `${mailbox.mailbox}: ${mailbox.lastWarning}`),
+  ].join("\n");
+
+  if (failing.length > 0) {
+    return { value: `Error · ${names(failing)}`, bar: "bad", title };
+  }
+  if (degraded.length > 0) {
+    return { value: `Degraded · ${names(degraded)}`, bar: "warn", title };
+  }
+
+  const lastSuccess = health
+    .map((mailbox) => mailbox.lastSuccessAt)
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1);
+  return {
+    value: lastSuccess ? formatRelative(lastSuccess, now) : "—",
+    bar: "good",
+    title,
+  };
 }

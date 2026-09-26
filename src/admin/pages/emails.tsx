@@ -1,4 +1,8 @@
-import type { EmailDirection, EmailListItem } from "../../db/emails";
+import type {
+  EmailDirection,
+  EmailListItem,
+  EmailProvider,
+} from "../../db/emails";
 import { AdminLayout } from "../layout";
 import {
   Badge,
@@ -7,6 +11,7 @@ import {
   DirectionIcon,
   EmptyState,
   EnrichmentBadge,
+  MailboxBadge,
   PriorityDot,
 } from "../ui";
 import { formatListDateTime } from "../format";
@@ -23,6 +28,8 @@ export interface EmailsFilters {
   direction?: EmailDirection;
   category?: string;
   source?: string;
+  provider?: EmailProvider;
+  mailbox?: string;
   actionRequired?: boolean;
   from?: string;
   to?: string;
@@ -56,6 +63,8 @@ export function EmailsPage({
     ["direction", filters.direction],
     ["category", filters.category],
     ["source", filters.source],
+    ["provider", filters.provider],
+    ["mailbox", filters.mailbox],
     ["action_required", filters.actionRequired ? "true" : undefined],
     ["from", filters.from],
     ["to", filters.to],
@@ -149,6 +158,32 @@ export function EmailsPage({
           </select>
         </div>
 
+        <div className="field">
+          <label htmlFor="provider">Provider</label>
+          <select
+            className="control"
+            id="provider"
+            name="provider"
+            defaultValue={filters.provider ?? ""}
+          >
+            <option value="">All providers</option>
+            <option value="resend">resend</option>
+            <option value="imap">imap</option>
+          </select>
+        </div>
+
+        <div className="field">
+          <label htmlFor="mailbox">Mailbox</label>
+          <input
+            className="control"
+            id="mailbox"
+            type="text"
+            name="mailbox"
+            defaultValue={filters.mailbox}
+            placeholder="INBOX, Spam…"
+          />
+        </div>
+
         <div className="field checkbox-field">
           <input
             type="checkbox"
@@ -222,6 +257,10 @@ export function EmailsPage({
                     </td>
                     <td className="col-shrink">
                       <DirectionIcon direction={email.direction} />
+                      <MailboxBadge
+                        provider={email.provider}
+                        mailbox={email.mailbox}
+                      />
                     </td>
                     <td className="counterpart-cell" title={counterpart(email)}>
                       {counterpart(email)}

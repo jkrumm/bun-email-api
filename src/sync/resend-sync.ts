@@ -1,38 +1,21 @@
 import type { Database } from "bun:sqlite";
 import type { GetEmailResponseSuccess } from "resend";
 import type { AdminResend } from "../admin/types";
-import { adminResend } from "../utils/resend";
 import {
   createEmailsRepo,
   type EmailAttachment,
   type UpsertEmailInput,
 } from "../db/emails";
 import { createSyncStateRepo } from "../db/sync-state";
-import { db as defaultDb } from "../db/client";
-import { runEnrichmentBatch } from "../enrich/worker";
+import type {
+  SyncDirectionSummary,
+  SyncInboundSummary,
+  SyncSummary,
+} from "./types";
 
 const PAGE_LIMIT = 100;
 const RATE_LIMIT_RETRY_MS = 1_500;
 const RATE_LIMIT_RETRIES = 3;
-const SYNC_INTERVAL_MS = 5 * 60_000;
-const FIRST_RUN_DELAY_MS = 5_000;
-
-export interface SyncDirectionSummary {
-  new: number;
-  updated: number;
-}
-
-// Inbound never updates an existing row (a known inbound email is simply
-// skipped), so it never had a meaningful `updated` count.
-export interface SyncInboundSummary {
-  new: number;
-}
-
-export interface SyncSummary {
-  outbound: SyncDirectionSummary;
-  inbound: SyncInboundSummary;
-  errors: string[];
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -264,47 +247,4 @@ export async function syncEmails({
   });
 
   return { outbound, inbound, errors };
-}
-
-let syncing = false;
-
-export async function runSyncNow(): Promise<SyncSummary | { busy: true }> {
-  if (syncing) return { busy: true };
-
-  syncing = true;
-  try {
-    const summary = await syncEmails({ db: defaultDb, resend: adminResend });
-
-    if (summary.errors.length > 0) {
-      console.error(
-        `sync completed with ${summary.errors.length} error(s)`,
-        summary.errors,
-      );
-    }
-
-    if (summary.outbound.new > 0 || summary.inbound.new > 0) {
-      void runEnrichmentBatch().catch((error) => {
-        console.error("Post-sync enrichment batch failed", { error });
-      });
-    }
-    return summary;
-  } finally {
-    syncing = false;
-  }
-}
-
-export function startSync(): void {
-  if (process.env.NODE_ENV === "test") return;
-
-  const runAndLog = () =>
-    void runSyncNow().catch((error) => {
-      console.error("Scheduled sync failed", { error });
-    });
-
-  const timer = setTimeout(() => {
-    runAndLog();
-    const interval = setInterval(runAndLog, SYNC_INTERVAL_MS);
-    interval.unref();
-  }, FIRST_RUN_DELAY_MS);
-  timer.unref();
 }

@@ -1,33 +1,80 @@
+import { X509Certificate } from "node:crypto";
 import { z } from "zod";
+import { normalizePem } from "./utils/pem";
 
-const envSchema = z.object({
-  BEA_SECRET_KEY: z.string().min(10, "BEA_SECRET_KEY is required!"),
-  BEA_RECEIVER_EMAIL: z.email("BEA_RECEIVER_EMAIL is required!"),
-  BEA_RESEND_API_KEY: z.string().min(1, "BEA_RESEND_API_KEY is required!"),
-  BEA_SY_SERENDIPITY_RECEIVER_EMAIL: z.email(
-    "BEA_SY_SERENDIPITY_RECEIVER_EMAIL is required!",
-  ),
-  BEA_SY_SERENDIPITY_FROM_EMAIL: z.string().optional(),
-  PORT: z.coerce.number().default(3010),
+export const envSchema = z
+  .object({
+    BEA_SECRET_KEY: z.string().min(10, "BEA_SECRET_KEY is required!"),
+    BEA_RECEIVER_EMAIL: z.email("BEA_RECEIVER_EMAIL is required!"),
+    BEA_RESEND_API_KEY: z.string().min(1, "BEA_RESEND_API_KEY is required!"),
+    BEA_SY_SERENDIPITY_RECEIVER_EMAIL: z.email(
+      "BEA_SY_SERENDIPITY_RECEIVER_EMAIL is required!",
+    ),
+    BEA_SY_SERENDIPITY_FROM_EMAIL: z.string().optional(),
+    PORT: z.coerce.number().default(3010),
 
-  BEA_LLM_BASE_URL: z.string().optional(),
-  BEA_LLM_API_KEY: z.string().optional(),
-  BEA_LLM_MODEL: z.string().optional(),
-  // Jev decision model (shadow mode). Unset key -> Jev is disabled everywhere.
-  BEA_JEV_API_KEY: z.string().optional(),
-  BEA_JEV_BASE_URL: z.string().default("https://api.beatapi.io"),
-  BEA_JEV_MODEL: z.string().default("jev-1.13-free"),
-  BEA_ADMIN_PASSWORD: z.string().optional(),
-  // Full-access key for the admin UI's list/get calls; the send path keeps
-  // the sending-only BEA_RESEND_API_KEY.
-  BEA_RESEND_ADMIN_API_KEY: z.string().optional(),
+    BEA_LLM_BASE_URL: z.string().optional(),
+    BEA_LLM_API_KEY: z.string().optional(),
+    BEA_LLM_MODEL: z.string().optional(),
+    // Jev decision model (shadow mode). Unset key -> Jev is disabled everywhere.
+    BEA_JEV_API_KEY: z.string().optional(),
+    BEA_JEV_BASE_URL: z.string().default("https://api.beatapi.io"),
+    BEA_JEV_MODEL: z.string().default("jev-1.13-free"),
+    BEA_ADMIN_PASSWORD: z.string().optional(),
+    // Full-access key for the admin UI's list/get calls; the send path keeps
+    // the sending-only BEA_RESEND_API_KEY.
+    BEA_RESEND_ADMIN_API_KEY: z.string().optional(),
 
-  // Directory for the SQLite database file. Defaults to ./data so local dev
-  // doesn't need any setup; ops sets it to a mounted volume path in prod.
-  BEA_DATA_DIR: z.string().default("./data"),
-  // Bearer key for /api/*. Unset -> every /api route 404s.
-  BEA_API_KEY: z.string().min(16).optional(),
-});
+    // Directory for the SQLite database file. Defaults to ./data so local dev
+    // doesn't need any setup; ops sets it to a mounted volume path in prod.
+    BEA_DATA_DIR: z.string().default("./data"),
+    // Bearer key for /api/*. Unset -> every /api route 404s.
+    BEA_API_KEY: z.string().min(16).optional(),
+
+    // IMAP ingest (Proton Mail Bridge). Unset host -> IMAP ingest disabled.
+    BEA_IMAP_HOST: z.string().optional(),
+    BEA_IMAP_PORT: z.coerce.number().int().min(1).max(65535).default(1143),
+    BEA_IMAP_USER: z.string().optional(),
+    BEA_IMAP_PASSWORD: z.string().optional(),
+    BEA_IMAP_MAILBOXES: z.string().default("INBOX,Spam"),
+    // PEM of the server certificate to pin (literal "\n" sequences accepted so
+    // it fits a one-line secret). Preferred over BEA_IMAP_TLS_INSECURE.
+    BEA_IMAP_TLS_CERT: z.string().optional(),
+    BEA_IMAP_TLS_INSECURE: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
+  })
+  .superRefine((value, context) => {
+    if (!value.BEA_IMAP_HOST) return;
+    for (const key of ["BEA_IMAP_USER", "BEA_IMAP_PASSWORD"] as const) {
+      if (!value[key]) {
+        context.addIssue({
+          code: "custom",
+          path: [key],
+          message: `${key} is required when BEA_IMAP_HOST is set`,
+        });
+      }
+    }
+    if (value.BEA_IMAP_TLS_CERT) {
+      try {
+        new X509Certificate(normalizePem(value.BEA_IMAP_TLS_CERT));
+      } catch {
+        context.addIssue({
+          code: "custom",
+          path: ["BEA_IMAP_TLS_CERT"],
+          message: "BEA_IMAP_TLS_CERT is not a valid PEM certificate",
+        });
+      }
+    }
+    if (!value.BEA_IMAP_MAILBOXES.split(",").some((name) => name.trim())) {
+      context.addIssue({
+        code: "custom",
+        path: ["BEA_IMAP_MAILBOXES"],
+        message: "BEA_IMAP_MAILBOXES must name at least one mailbox",
+      });
+    }
+  });
 
 function parseEnv() {
   // Compose interpolates an unset `${VAR}` to "", which must read as unset —

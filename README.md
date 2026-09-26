@@ -70,11 +70,12 @@ Env vars (all optional):
 
 ## Storage
 
-Every email (sent and received via Resend) and every contact-form submission is persisted in a SQLite database opened with `bun:sqlite` (`src/db/`), at `${BEA_DATA_DIR}/bun-email-api.sqlite`. Migrations (`src/db/migrations.ts`) run automatically on first use, tracked via `PRAGMA user_version`.
+Every email (sent and received via Resend, plus the human inbox via IMAP) and every contact-form submission is persisted in a SQLite database opened with `bun:sqlite` (`src/db/`), at `${BEA_DATA_DIR}/bun-email-api.sqlite`. Migrations (`src/db/migrations.ts`) run automatically on first use, tracked via `PRAGMA user_version`.
 
 Tables:
 
-- `emails` — one row per email (`direction`, addresses, subject, `html`/`text`, `attachments`, `source` — our own template/route id for outbound mail, e.g. `fpp-sender` — and Resend's `last_event`).
+- `emails` — one row per email (`direction`, addresses, subject, `html`/`text`, `attachments`, `source` — our own template/route id for outbound mail, e.g. `fpp-sender` — and Resend's `last_event`). `provider` (`resend` | `imap`), `mailbox` and `message_id` (RFC Message-ID) record where a row came from; IMAP rows are always `inbound`.
+- `imap_sync_state` — per-mailbox IMAP cursor (`uid_validity`, `last_uid`).
 - `email_enrichments` — one row per email, filled in by the LLM enrichment worker (see below).
 - `submissions` — one row per contact-form submission judged by the spam filter (replaces the old in-memory store).
 - `emails_fts` — an FTS5 index over subject/addresses/text/summary, kept in sync by the `emails`/`email_enrichments` repository code and used by `/api/emails?q=`.
@@ -91,6 +92,27 @@ Sync self-heals after a partial failure: a `sync_state` table (per direction) on
 
 - `BEA_RESEND_ADMIN_API_KEY` — optional full-access Resend key used for sync. Without it, sync falls back to the sending-only `BEA_RESEND_API_KEY`, and Received emails additionally need inbound receiving enabled on the domain.
 
+## IMAP ingest
+
+`src/sync/imap-sync.ts` pulls the human inbox (e.g. `hello@` on Proton Mail via Proton Mail Bridge, which is the only way into Proton) into the same `emails` table, so it gets the same enrichment and is served by the same `/api`. `src/sync/index.ts` is the composition root: one lock and one 5-minute schedule for both Resend and IMAP, shared by `POST /api/sync` and the admin "Sync now" button (409 while a run is in progress). Each source fails in isolation — a Resend outage doesn't block IMAP and vice versa — and the enrichment worker is kicked after any new rows.
+
+Env vars (all optional; unset `BEA_IMAP_HOST` → IMAP ingest is off):
+
+- `BEA_IMAP_HOST`, `BEA_IMAP_PORT` (default `1143`), `BEA_IMAP_USER`, `BEA_IMAP_PASSWORD` — Bridge's per-address credentials. A host without user/password fails fast at startup.
+- `BEA_IMAP_MAILBOXES` — comma-separated, default `INBOX,Spam`. Syncing Proton's Spam folder lets you compare its filter against our classifier; filter with `?mailbox=Spam` (case-insensitive).
+- `BEA_IMAP_TLS_CERT` — PEM of Bridge's self-signed certificate (`\n`-escaped newlines are accepted, so it fits a one-line secret). The cert is the sole trust anchor **and** the presented certificate's SHA-256 fingerprint must equal the pinned one, so a CA certificate configured by mistake can't vouch for anything else. Hostname matching is skipped: Bridge issues for localhost while we connect over the tailnet.
+- `BEA_IMAP_TLS_INSECURE=true` — accept any certificate (one warning at startup). Only acceptable because the path is WireGuard (Tailscale); prefer `BEA_IMAP_TLS_CERT`. Ignored when a cert is set.
+
+The connection is `STARTTLS` (login is refused if the upgrade fails) and has plain network timeouts (30 s connect, 15 s greeting, 60 s socket inactivity), after which the client is closed, so a stalled Bridge fails the tick instead of holding the sync lock.
+
+**Read-only guarantee.** The IMAP port (`src/sync/imap-port.ts`) exposes only list and fetch — there is no code path that sets a flag, moves, copies or deletes. Mailboxes are opened read-only (`EXAMINE`) and every fetch uses `BODY.PEEK`, so `\Seen` is never touched. The adapter's tests run against a fake client that only implements `getMailboxLock`, `fetchAll` and `fetchOne`.
+
+**Cursor semantics.** Per mailbox, `imap_sync_state` stores the `UIDVALIDITY` and the highest UID stored. Each run lists (a bounded UID window at a time) the UIDs above the cursor, at most 500 per mailbox per run, so a first-time backfill spreads over several ticks. Messages are fetched in batches (≤ 50 messages / 10 MB) and each batch's rows plus the cursor are written in one SQLite transaction, so a failure leaves the cursor at the last clean batch and the next tick retries from there. Nothing is skipped silently: a uid the server still has but did not return holds the cursor before it (and is retried); only a uid confirmed gone is skipped, and that is reported in the sync `errors`. If `UIDVALIDITY` changes the mailbox is rescanned from UID 1; row ids derive from the Message-ID (per mailbox) or, without one, from size + arrival time + a hash of the raw message — never the UID — so the rescan doesn't duplicate rows.
+
+**Storage rules.** IMAP rows are insert-only: an existing id is never overwritten, so a sender-controlled Message-ID can't replace a stored email. Messages over 5 MB (or without a reported size) are stored headers-only; attachments are metadata only (filename, type, size). A message that can't be parsed or stored becomes a metadata-only row and is reported in `errors` instead of wedging the cursor.
+
+**Health.** `imap_sync_state` also records `last_success_at` / `last_error` per mailbox. They appear as `imap` in `GET /api/stats` and as an "IMAP ingest" tile on the admin overview, so a dead Bridge is visible.
+
 ## Enrichment
 
 Every email is enriched once by the LLM (`src/enrich/`): `category`, `priority`, `actionRequired`, a short `summary`, a `suggestedAction`, `language`, and up to 8 extracted `facts`. A background worker (`src/enrich/worker.ts`) claims up to 10 pending/retryable rows every 30s and enriches them sequentially; it's also kicked immediately after a sync that added new rows. Enrichment reuses the same LLM configuration as the spam classifier (`BEA_LLM_BASE_URL`/`BEA_LLM_API_KEY`/`BEA_LLM_MODEL`, see above) and fails the same way: rows stay `pending` if the LLM isn't configured, and a failed attempt is retried up to 3 times before being left `failed`.
@@ -101,14 +123,14 @@ Every email is enriched once by the LLM (`src/enrich/`): `category`, `priority`,
 
 `GET`/`POST /api/*` — bearer-authenticated JSON API over the stored emails and submissions. Unset `BEA_API_KEY` → every `/api/*` route 404s; a wrong/missing bearer token → `401 { "error": "unauthorized" }`.
 
-| Method & path                 | Query params                                                                                                                                                 | Notes                                                                                                                                               |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/emails`             | `direction`, `category` (comma-separated), `source`, `from`, `to`, `q`, `since`, `until`, `action_required`, `status`, `limit` (1-100, default 25), `cursor` | Keyset-paginated, newest first. List items omit `html`/`text` in favor of a 240-char `snippet`.                                                     |
-| `GET /api/emails/:id`         | `include=html`                                                                                                                                               | Full email including `text`; `html` only when `include=html` is passed. `404` if unknown.                                                           |
-| `POST /api/emails/:id/enrich` | —                                                                                                                                                            | Resets and re-runs enrichment for one email, waits for the result, and returns it.                                                                  |
-| `GET /api/stats`              | `since` (default: 30 days ago)                                                                                                                               | Totals by direction, counts by category, open action-required count, a 14-day per-day chart (Europe/Berlin days), and submission counts by verdict. |
-| `GET /api/submissions`        | `verdict`, `source`, `delivered`, `limit`, `cursor`                                                                                                          | Same keyset pagination as `/api/emails`.                                                                                                            |
-| `POST /api/sync`              | —                                                                                                                                                            | Runs a Resend sync now; `409` if one is already running.                                                                                            |
+| Method & path                 | Query params                                                                                                                                                                                           | Notes                                                                                                                                               |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/emails`             | `direction`, `category` (comma-separated), `source`, `provider` (`resend`\|`imap`), `mailbox`, `from`, `to`, `q`, `since`, `until`, `action_required`, `status`, `limit` (1-100, default 25), `cursor` | Keyset-paginated, newest first. List items omit `html`/`text` in favor of a 240-char `snippet`.                                                     |
+| `GET /api/emails/:id`         | `include=html`                                                                                                                                                                                         | Full email including `text`; `html` only when `include=html` is passed. `404` if unknown.                                                           |
+| `POST /api/emails/:id/enrich` | —                                                                                                                                                                                                      | Resets and re-runs enrichment for one email, waits for the result, and returns it.                                                                  |
+| `GET /api/stats`              | `since` (default: 30 days ago)                                                                                                                                                                         | Totals by direction, counts by category, open action-required count, a 14-day per-day chart (Europe/Berlin days), and submission counts by verdict. |
+| `GET /api/submissions`        | `verdict`, `source`, `delivered`, `limit`, `cursor`                                                                                                                                                    | Same keyset pagination as `/api/emails`.                                                                                                            |
+| `POST /api/sync`              | —                                                                                                                                                                                                      | Runs a Resend + IMAP sync now; `409` if one is already running.                                                                                     |
 
 ```bash
 curl -H "Authorization: Bearer $BEA_API_KEY" "https://<host>/api/emails?direction=inbound&limit=10"

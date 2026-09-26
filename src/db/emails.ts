@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 export type EmailDirection = "inbound" | "outbound";
+export type EmailProvider = "resend" | "imap";
 export type EnrichmentStatus = "pending" | "done" | "failed";
 
 export interface EmailAttachment {
@@ -70,6 +71,17 @@ export interface UpsertEmailInput {
   text?: string | null;
   attachments?: EmailAttachment[];
   source?: string | null;
+  // Defaults to "resend" on insert; never changed by a later upsert.
+  provider?: EmailProvider;
+  mailbox?: string | null;
+  messageId?: string | null;
+  // SHA-256 of the raw message (IMAP): lets a later message that reuses the
+  // Message-ID be recognised as different content.
+  contentHash?: string | null;
+  // When the id already exists, leave its content untouched (only mailbox /
+  // message_id bookkeeping is filled in). IMAP ids derive from a
+  // sender-controlled Message-ID, which must never overwrite a stored row.
+  insertOnly?: boolean;
 }
 
 export interface EmailRecord {
@@ -87,6 +99,9 @@ export interface EmailRecord {
   text: string | null;
   attachments: EmailAttachment[];
   source: string | null;
+  provider: EmailProvider;
+  mailbox: string | null;
+  messageId: string | null;
   syncedAt: string;
 }
 
@@ -101,10 +116,12 @@ export interface EmailListItem extends Omit<
   snippet: string;
 }
 
-export interface ListEmailsFilters {
+interface ListEmailsFilters {
   direction?: EmailDirection;
   category?: string[];
   source?: string;
+  provider?: EmailProvider;
+  mailbox?: string;
   from?: string;
   to?: string;
   q?: string;
@@ -116,7 +133,7 @@ export interface ListEmailsFilters {
   cursor?: string;
 }
 
-export interface ListEmailsResult {
+interface ListEmailsResult {
   data: EmailListItem[];
   nextCursor: string | null;
 }
@@ -154,6 +171,9 @@ interface EmailRow {
   text: string | null;
   attachments: string;
   source: string | null;
+  provider: EmailProvider;
+  mailbox: string | null;
+  message_id: string | null;
   synced_at: string;
 }
 
@@ -200,6 +220,9 @@ function toEmailRecord(row: EmailRow): EmailRecord {
     text: row.text,
     attachments: parseJsonArray<EmailAttachment>(row.attachments),
     source: row.source,
+    provider: row.provider,
+    mailbox: row.mailbox,
+    messageId: row.message_id,
     syncedAt: row.synced_at,
   };
 }
@@ -316,13 +339,13 @@ export function createEmailsRepo(db: Database) {
 
   // Wrapped in one transaction so a partial write (e.g. the email row lands
   // but the enrichment row or FTS index doesn't) can never happen.
-  const upsertEmailTx = db.transaction((input: UpsertEmailInput) => {
-    db.run(
-      `INSERT INTO emails (
+  const insertEmailSql = `INSERT INTO emails (
          id, direction, from_address, to_addresses, cc, bcc, reply_to,
-         subject, created_at, last_event, html, text, attachments, source, synced_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
+         subject, created_at, last_event, html, text, attachments, source, synced_at,
+         provider, mailbox, message_id, content_hash
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+  const updateOnConflictSql = `ON CONFLICT(id) DO UPDATE SET
          subject = excluded.subject,
          created_at = excluded.created_at,
          cc = COALESCE(excluded.cc, emails.cc),
@@ -333,7 +356,19 @@ export function createEmailsRepo(db: Database) {
          text = COALESCE(excluded.text, emails.text),
          attachments = COALESCE(excluded.attachments, emails.attachments),
          source = COALESCE(excluded.source, emails.source),
-         synced_at = excluded.synced_at`,
+         mailbox = COALESCE(excluded.mailbox, emails.mailbox),
+         message_id = COALESCE(excluded.message_id, emails.message_id),
+         synced_at = excluded.synced_at`;
+
+  const insertOnlyOnConflictSql = `ON CONFLICT(id) DO UPDATE SET
+         mailbox = COALESCE(emails.mailbox, excluded.mailbox),
+         message_id = COALESCE(emails.message_id, excluded.message_id),
+         content_hash = COALESCE(emails.content_hash, excluded.content_hash)`;
+
+  const upsertEmailTx = db.transaction((input: UpsertEmailInput) => {
+    db.run(
+      `${insertEmailSql}
+       ${input.insertOnly ? insertOnlyOnConflictSql : updateOnConflictSql}`,
       [
         input.id,
         input.direction,
@@ -352,6 +387,10 @@ export function createEmailsRepo(db: Database) {
           : JSON.stringify(input.attachments),
         input.source === undefined ? null : input.source,
         new Date().toISOString(),
+        input.provider ?? "resend",
+        input.mailbox ?? null,
+        input.messageId ?? null,
+        input.contentHash ?? null,
       ],
     );
 
@@ -409,6 +448,14 @@ export function createEmailsRepo(db: Database) {
     if (filters.source) {
       conditions.push("e.source = ?");
       params.push(filters.source);
+    }
+    if (filters.provider) {
+      conditions.push("e.provider = ?");
+      params.push(filters.provider);
+    }
+    if (filters.mailbox) {
+      conditions.push("e.mailbox = ? COLLATE NOCASE");
+      params.push(filters.mailbox);
     }
     if (filters.from) {
       conditions.push("e.from_address LIKE ? ESCAPE '\\'");
@@ -610,6 +657,15 @@ export function createEmailsRepo(db: Database) {
     );
   }
 
+  function getContentHash(id: string): string | null {
+    const row = db
+      .query<{ content_hash: string | null }, [string]>(
+        "SELECT content_hash FROM emails WHERE id = ?",
+      )
+      .get(id);
+    return row?.content_hash ?? null;
+  }
+
   function knownEmailIds(ids: string[]): Set<string> {
     if (ids.length === 0) return new Set();
 
@@ -714,6 +770,7 @@ export function createEmailsRepo(db: Database) {
     markEnrichmentFailed,
     resetEnrichment,
     knownEmailIds,
+    getContentHash,
     emailStats,
     actionRequiredCount,
     lastSyncedAt,

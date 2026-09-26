@@ -1,6 +1,6 @@
 import { app } from "./app";
 import { env } from "./env";
-import { startSync } from "./sync/resend-sync";
+import { startSync } from "./sync";
 import { startEnrichmentWorker } from "./enrich/worker";
 
 app.listen(env.PORT);

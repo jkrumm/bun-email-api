@@ -117,6 +117,34 @@ const migrations: Migration[] = [
       ALTER TABLE email_enrichments ADD COLUMN jev_error TEXT;
     `,
   },
+  {
+    // IMAP ingest: every row records which provider produced it (existing
+    // rows are Resend by definition), plus the IMAP mailbox and RFC
+    // Message-ID. imap_sync_state holds the per-mailbox UID cursor.
+    version: 5,
+    up: `
+      ALTER TABLE emails ADD COLUMN provider TEXT NOT NULL DEFAULT 'resend' CHECK (provider IN ('resend', 'imap'));
+      ALTER TABLE emails ADD COLUMN mailbox TEXT;
+      ALTER TABLE emails ADD COLUMN message_id TEXT;
+      ALTER TABLE emails ADD COLUMN content_hash TEXT;
+      CREATE INDEX idx_emails_provider_mailbox ON emails (provider, mailbox COLLATE NOCASE);
+      CREATE INDEX idx_emails_message_id ON emails (message_id);
+
+      CREATE TABLE imap_sync_state (
+        mailbox TEXT PRIMARY KEY,
+        uid_validity TEXT,
+        last_uid INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        last_success_at TEXT,
+        last_error TEXT,
+        last_error_at TEXT,
+        last_warning TEXT,
+        last_warning_at TEXT,
+        held_uid INTEGER,
+        held_count INTEGER NOT NULL DEFAULT 0
+      );
+    `,
+  },
 ];
 
 export function runMigrations(

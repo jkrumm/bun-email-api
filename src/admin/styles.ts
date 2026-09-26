@@ -318,6 +318,9 @@ export const STYLES = `
   dl.meta-grid { display: grid; grid-template-columns: 130px 1fr; gap: 6px 12px; margin: 0; font-size: 13.5px; }
   dl.meta-grid dt { color: var(--vx-faint); }
   dl.meta-grid dd { margin: 0; }
+  .wrap-anywhere { overflow-wrap: anywhere; }
+  .mailbox-badge { display: inline-block; max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; margin-left: 6px; }
+  .mailbox-badge .badge { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
   dl.fact-grid { display: grid; grid-template-columns: 140px 1fr; gap: 4px 12px; margin: 0; font-size: 13px; }
   dl.fact-grid dt { color: var(--vx-faint); }
   dl.fact-grid dd { margin: 0; }

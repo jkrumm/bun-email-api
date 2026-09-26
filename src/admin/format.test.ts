@@ -8,6 +8,7 @@ import {
   formatNumber,
   formatPercent,
   formatRelative,
+  imapTileValue,
 } from "./format";
 
 // Fixed "now" for deterministic Heute/Gestern/relative assertions.
@@ -88,5 +89,57 @@ describe("berlinDayBoundaryToUtcIso", () => {
     expect(berlinDayBoundaryToUtcIso("2026-12-15", "end")).toBe(
       "2026-12-15T22:59:59.999Z",
     );
+  });
+});
+
+describe("imapTileValue", () => {
+  const now = new Date("2026-09-15T12:00:00.000Z");
+  const healthy = {
+    mailbox: "INBOX",
+    lastUid: 3,
+    lastSuccessAt: "2026-09-15T11:55:00.000Z",
+    lastError: null,
+    lastErrorAt: null,
+    lastWarning: null,
+    lastWarningAt: null,
+  };
+
+  test("healthy: last success, green", () => {
+    const tile = imapTileValue([healthy], now);
+    expect(tile.bar).toBe("good");
+    expect(tile.value).not.toContain("Error");
+    expect(tile.title).toBe("");
+  });
+
+  test("no runs yet: dash", () => {
+    expect(
+      imapTileValue([{ ...healthy, lastSuccessAt: null }], now).value,
+    ).toBe("—");
+  });
+
+  test("a warning is never green", () => {
+    const tile = imapTileValue(
+      [{ ...healthy, lastWarning: "uid 3 unparseable" }],
+      now,
+    );
+    expect(tile).toEqual({
+      value: "Degraded · INBOX",
+      bar: "warn",
+      title: "INBOX: uid 3 unparseable",
+    });
+  });
+
+  test("errors outrank warnings", () => {
+    const tile = imapTileValue(
+      [
+        { ...healthy, lastWarning: "w" },
+        { ...healthy, mailbox: "Spam", lastError: "connect: ECONNREFUSED" },
+      ],
+      now,
+    );
+    expect(tile.bar).toBe("bad");
+    expect(tile.value).toBe("Error · Spam");
+    expect(tile.title).toContain("Spam: connect: ECONNREFUSED");
+    expect(tile.title).toContain("INBOX: w");
   });
 });

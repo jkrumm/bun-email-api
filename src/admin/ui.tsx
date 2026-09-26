@@ -81,17 +81,37 @@ export function StatTile({
   label,
   value,
   bar,
+  title,
 }: {
   label: string;
   value: string;
   bar?: "good" | "warn" | "bad";
+  title?: string;
 }) {
   return (
-    <div className="stat-tile">
+    <div className="stat-tile" title={title}>
       {bar ? <span className={`stat-tile-bar stat-tile-bar-${bar}`} /> : null}
       <span className="stat-label">{label}</span>
       <span className="stat-value">{value}</span>
     </div>
+  );
+}
+
+// "imap · INBOX" marker for rows ingested over IMAP; nothing for other
+// providers. Long mailbox names are truncated, the full label is the title.
+export function MailboxBadge({
+  provider,
+  mailbox,
+}: {
+  provider: string;
+  mailbox: string | null;
+}) {
+  if (provider !== "imap") return null;
+  const label = `imap${mailbox ? ` · ${mailbox}` : ""}`;
+  return (
+    <span className="mailbox-badge" title={label}>
+      <Badge color="outline">{label}</Badge>
+    </span>
   );
 }
 
