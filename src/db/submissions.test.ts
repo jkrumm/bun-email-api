@@ -1,14 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { openDatabase } from "./client";
-import { createSubmissionsRepo, type JevSubmissionView } from "./submissions";
+import { createSubmissionsRepo, type JevSubmissionResult } from "./submissions";
 
-const jev: JevSubmissionView = {
+const jev: JevSubmissionResult = {
   verdict: "spam",
   confidence: 0.9,
   probabilities: { legit: 0.05, spam: 0.9, marketing: 0.05 },
   latencyMs: 800,
   model: "jev-test",
-  error: null,
 };
 
 const base = {
@@ -25,48 +24,86 @@ function repo() {
   return createSubmissionsRepo(openDatabase(":memory:"));
 }
 
-describe("submissions Jev columns", () => {
-  test("recordSubmission stores an inline Jev verdict and LLM latency", () => {
+describe("submissions Jev queue", () => {
+  test("recordSubmission queues the row only when Jev is pending, and stores LLM latency", () => {
     const submissions = repo();
-    submissions.recordSubmission({ ...base, llmLatencyMs: 1500, jev });
+    submissions.recordSubmission({
+      ...base,
+      llmLatencyMs: 1500,
+      jevPending: true,
+    });
+    submissions.recordSubmission({ ...base, verdict: "spam" });
 
-    const [row] = submissions.listSubmissions().data;
-    expect(row?.llmLatencyMs).toBe(1500);
-    expect(row?.jev).toEqual(jev);
-  });
-
-  test("attachJev round-trips onto an existing row, including an error result", () => {
-    const submissions = repo();
-    const { id } = submissions.recordSubmission(base);
-    expect(submissions.listSubmissions().data[0]?.jev).toBeNull();
-
-    const failed: JevSubmissionView = {
+    const rows = submissions.listSubmissions().data;
+    const queued = rows.find((row) => row.verdict === "legit");
+    const unqueued = rows.find((row) => row.verdict === "spam");
+    expect(queued?.llmLatencyMs).toBe(1500);
+    expect(queued?.jev).toEqual({
+      status: "pending",
+      attempts: 0,
+      nextAttemptAt: null,
       verdict: null,
       confidence: null,
       probabilities: null,
-      latencyMs: 30,
-      model: "jev-test",
-      error: "Jev request failed: 529",
-    };
-    submissions.attachJev(id, failed);
-
-    expect(submissions.listSubmissions().data[0]?.jev).toEqual(failed);
+      latencyMs: null,
+      model: null,
+      error: null,
+    });
+    expect(unqueued?.jev).toBeNull();
   });
 
-  test("getJevComparison computes agreement and median latencies", () => {
+  test("claimNextJev returns the stored payload once and completeJev stores the verdict", () => {
     const submissions = repo();
-    submissions.recordSubmission({ ...base, llmLatencyMs: 1000, jev });
+    const { id } = submissions.recordSubmission({
+      ...base,
+      submission: { message: "hi", n: 2 },
+      jevPending: true,
+    });
+
+    const claim = submissions.claimNextJev()!;
+    expect(claim).toMatchObject({
+      id,
+      source: "fpp",
+      submission: '{"message":"hi","n":2}',
+    });
+    expect(submissions.claimNextJev()).toBeNull();
+
+    submissions.completeJev({ id, claimToken: claim.claimToken, result: jev });
+
+    expect(submissions.listSubmissions().data[0]?.jev).toEqual({
+      ...jev,
+      status: "done",
+      attempts: 1,
+      nextAttemptAt: null,
+      error: null,
+    });
+  });
+
+  test("getJevComparison counts only done rows", () => {
+    const submissions = repo();
+    const complete = (result = jev) =>
+      submissions.completeJev({ ...submissions.claimNextJev()!, result });
+
+    submissions.recordSubmission({
+      ...base,
+      llmLatencyMs: 1000,
+      jevPending: true,
+    });
+    complete();
     submissions.recordSubmission({
       ...base,
       verdict: "spam",
       llmLatencyMs: 3000,
-      jev: { ...jev, latencyMs: 200 },
+      jevPending: true,
     });
+    complete({ ...jev, latencyMs: 200 });
     submissions.recordSubmission({
       ...base,
       llmLatencyMs: 5000,
-      jev: { ...jev, verdict: null, confidence: null, error: "x" },
+      jevPending: true,
     });
+    submissions.failJev({ ...submissions.claimNextJev()!, error: "x" });
+    submissions.recordSubmission({ ...base, jevPending: true });
     submissions.recordSubmission(base);
 
     expect(
@@ -75,9 +112,10 @@ describe("submissions Jev columns", () => {
       compared: 2,
       agreed: 1,
       agreementRate: 0.5,
-      llmMedianLatencyMs: 3000,
-      jevMedianLatencyMs: 800,
+      llmMedianLatencyMs: 2000,
+      jevMedianLatencyMs: 500,
     });
+    expect(submissions.jevQueueCounts()).toEqual({ pending: 2, failed: 0 });
   });
 
   test("getJevComparison is empty-safe", () => {

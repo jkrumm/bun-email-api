@@ -6,7 +6,12 @@ import type {
 } from "../../db/submissions";
 import { AdminLayout } from "../layout";
 import { Badge, EmptyState } from "../ui";
-import { formatLatency, formatListDateTime, formatPercent } from "../format";
+import {
+  formatJevQueueState,
+  formatLatency,
+  formatListDateTime,
+  formatPercent,
+} from "../format";
 
 const VERDICT_COLOR: Record<Verdict, string> = {
   legit: "good",
@@ -20,8 +25,10 @@ function JevCell({ submission }: { submission: SubmissionRecord }) {
   if (jev.verdict === null || jev.confidence === null) {
     return (
       <>
-        <Badge color="outline">error</Badge>
-        <p className="summary-line">{jev.error ?? "unknown error"}</p>
+        <Badge color={jev.status === "failed" ? "bad" : "outline"}>
+          {jev.status}
+        </Badge>
+        <p className="summary-line">{formatJevQueueState(jev)}</p>
       </>
     );
   }

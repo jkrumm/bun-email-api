@@ -145,6 +145,55 @@ const migrations: Migration[] = [
       );
     `,
   },
+  {
+    // Durable Jev queue. jev_status: NULL = not applicable (outbound email,
+    // or Jev was off when the submission was recorded), 'pending' = waiting
+    // for the Jev worker, 'done' / 'failed' = terminal. Backfill: rows
+    // without a successful Jev result are queued (the raw payload is stored),
+    // rows with one are 'done'.
+    version: 6,
+    up: `
+      ALTER TABLE submissions ADD COLUMN jev_status TEXT CHECK (jev_status IN ('pending', 'done', 'failed'));
+      ALTER TABLE submissions ADD COLUMN jev_attempts INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE submissions ADD COLUMN jev_next_attempt_at TEXT;
+      ALTER TABLE submissions ADD COLUMN jev_claimed_at TEXT;
+
+      ALTER TABLE email_enrichments ADD COLUMN jev_status TEXT CHECK (jev_status IN ('pending', 'done', 'failed'));
+      ALTER TABLE email_enrichments ADD COLUMN jev_attempts INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE email_enrichments ADD COLUMN jev_next_attempt_at TEXT;
+      ALTER TABLE email_enrichments ADD COLUMN jev_claimed_at TEXT;
+
+      UPDATE submissions SET
+        jev_status = CASE WHEN jev_verdict IS NOT NULL THEN 'done' ELSE 'pending' END,
+        jev_attempts = CASE WHEN jev_verdict IS NOT NULL THEN 1 ELSE 0 END;
+      UPDATE submissions SET
+        jev_model = NULL, jev_latency_ms = NULL, jev_error = NULL
+      WHERE jev_status = 'pending';
+
+      -- Every email has an enrichment row (upsertEmail creates it in the same
+      -- transaction); this only guards against a row lost to an old bug.
+      INSERT INTO email_enrichments (email_id, status, attempts, updated_at)
+      SELECT id, 'pending', 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      FROM emails e
+      WHERE NOT EXISTS (SELECT 1 FROM email_enrichments en WHERE en.email_id = e.id);
+
+      UPDATE email_enrichments SET
+        jev_status = CASE
+          WHEN jev_model IS NOT NULL AND jev_error IS NULL THEN 'done'
+          ELSE 'pending'
+        END,
+        jev_attempts = CASE WHEN jev_model IS NOT NULL AND jev_error IS NULL THEN 1 ELSE 0 END
+      WHERE email_id IN (SELECT id FROM emails WHERE direction = 'inbound');
+      UPDATE email_enrichments SET
+        jev_spam_probability = NULL, jev_category = NULL,
+        jev_category_confidence = NULL, jev_latency_ms = NULL,
+        jev_model = NULL, jev_error = NULL
+      WHERE jev_status = 'pending';
+
+      CREATE INDEX idx_submissions_jev_status ON submissions (jev_status) WHERE jev_status = 'pending';
+      CREATE INDEX idx_email_enrichments_jev_status ON email_enrichments (jev_status) WHERE jev_status = 'pending';
+    `,
+  },
 ];
 
 export function runMigrations(

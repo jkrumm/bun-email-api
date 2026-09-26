@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { gateSubmission } from "./gate";
 import type { ClassificationResult } from "./classify";
-import type { JevSubmissionView } from "../db/submissions";
 import { openDatabase } from "../db/client";
 import { createSubmissionsRepo } from "../db/submissions";
 
@@ -185,197 +184,107 @@ describe("gateSubmission", () => {
     expect(record?.reason).toBe("genuine · delivery failed");
   });
 
-  describe("Jev shadow mode", () => {
-    const jevOutcome = (
-      overrides: Partial<JevSubmissionView> = {},
-    ): JevSubmissionView => ({
-      verdict: "spam",
-      confidence: 0.9,
-      probabilities: { legit: 0.05, spam: 0.9, marketing: 0.05 },
-      latencyMs: 12,
-      model: "jev-test",
-      error: null,
-      ...overrides,
-    });
-
-    const jevAfter = (outcome: JevSubmissionView, delayMs: number) => () =>
-      new Promise<JevSubmissionView>((resolve) => {
-        setTimeout(() => resolve(outcome), delayMs);
-      });
-
-    test("stores Jev's verdict beside the LLM's without affecting delivery", async () => {
-      const { deliver, calls } = deliverSpy();
-      const submissions = testSubmissionsRepo();
-
-      const result = await gateSubmission({
+  describe("Jev queue", () => {
+    const gate = (
+      submissions: ReturnType<typeof testSubmissionsRepo>,
+      overrides: Partial<Parameters<typeof gateSubmission>[0]> = {},
+    ) =>
+      gateSubmission({
         source: "fpp",
         submission: { email: "a@b.com" },
-        deliver,
+        deliver: async () => {},
         classify: instantClassify(
           classifyResult({ verdict: "legit", confidence: 0.95 }),
         ),
-        jev: jevAfter(jevOutcome(), 0),
         record: submissions.recordSubmission,
-        attachJev: submissions.attachJev,
+        ...overrides,
       });
-      await Bun.sleep(10);
 
-      // Jev says spam at 0.9, the LLM's legit verdict still wins.
+    test("queues the recorded row for Jev and kicks the worker, without affecting delivery", async () => {
+      const { deliver, calls } = deliverSpy();
+      const submissions = testSubmissionsRepo();
+      let kicks = 0;
+
+      const result = await gate(submissions, {
+        deliver,
+        jevEnabled: () => true,
+        kickJev: () => kicks++,
+      });
+
       expect(result).toEqual({ delivered: true });
       expect(calls).toEqual([{ subjectPrefix: "" }]);
-      const [record] = submissions.listSubmissions().data;
-      expect(record?.verdict).toBe("legit");
-      expect(record?.llmLatencyMs).toBeGreaterThanOrEqual(0);
-      expect(record?.jev).toMatchObject({
-        verdict: "spam",
-        confidence: 0.9,
-        latencyMs: 12,
-        model: "jev-test",
-        error: null,
-      });
-      expect(record?.jev?.probabilities?.spam).toBe(0.9);
-    });
-
-    test("a slow Jev never extends the deadline and is attached once it lands", async () => {
-      const { deliver } = deliverSpy();
-      const submissions = testSubmissionsRepo();
-      const startedAt = Date.now();
-
-      await gateSubmission({
-        source: "fpp",
-        submission: { email: "a@b.com" },
-        deliver,
-        classify: instantClassify(classifyResult({ verdict: "legit" })),
-        jev: jevAfter(jevOutcome(), 200),
-        record: submissions.recordSubmission,
-        attachJev: submissions.attachJev,
-        deadlineMs: 20,
-      });
-
-      expect(Date.now() - startedAt).toBeLessThan(150);
-      expect(submissions.listSubmissions().data[0]?.jev).toBeNull();
-
-      await Bun.sleep(250);
-      expect(submissions.listSubmissions().data[0]?.jev?.verdict).toBe("spam");
-    });
-
-    test("a Jev failure is recorded as an error and never breaks the gate", async () => {
-      const { deliver, calls } = deliverSpy();
-      const submissions = testSubmissionsRepo();
-
-      const result = await gateSubmission({
-        source: "sy-serendipity",
-        submission: { email: "a@b.com" },
-        deliver,
-        classify: instantClassify(classifyResult({ verdict: "legit" })),
-        jev: jevAfter(
-          jevOutcome({
-            verdict: null,
-            confidence: null,
-            probabilities: null,
-            error: "Jev request failed: 529",
-          }),
-          0,
-        ),
-        record: submissions.recordSubmission,
-        attachJev: submissions.attachJev,
-      });
-      await Bun.sleep(10);
-
-      expect(result).toEqual({ delivered: true });
-      expect(calls).toHaveLength(1);
+      expect(kicks).toBe(1);
       expect(submissions.listSubmissions().data[0]?.jev).toMatchObject({
+        status: "pending",
+        attempts: 0,
         verdict: null,
-        error: "Jev request failed: 529",
       });
+      expect(submissions.claimNextJev()).not.toBeNull();
     });
 
-    test("a Jev that already landed is stored inline with the row", async () => {
-      const { deliver } = deliverSpy();
+    test("queues suppressed submissions too", async () => {
       const submissions = testSubmissionsRepo();
-      let attached = 0;
 
-      await gateSubmission({
-        source: "fpp",
-        submission: { email: "a@b.com" },
-        deliver,
-        classify: delayedClassify(classifyResult(), 20),
-        jev: jevAfter(jevOutcome(), 0),
-        record: submissions.recordSubmission,
-        attachJev: () => {
-          attached++;
-        },
+      const result = await gate(submissions, {
+        classify: instantClassify(
+          classifyResult({ verdict: "spam", confidence: 0.99 }),
+        ),
+        jevEnabled: () => true,
+        kickJev: () => {},
       });
 
-      expect(submissions.listSubmissions().data[0]?.jev?.verdict).toBe("spam");
-      await Bun.sleep(10);
-      expect(attached).toBe(0);
+      expect(result).toEqual({ delivered: false });
+      expect(submissions.listSubmissions().data[0]?.jev?.status).toBe(
+        "pending",
+      );
     });
 
-    test("attachJev throwing is only logged and never breaks the gate", async () => {
-      const { deliver, calls } = deliverSpy();
+    test("a verdict that lands after the deadline is queued when it is recorded", async () => {
       const submissions = testSubmissionsRepo();
 
-      const result = await gateSubmission({
-        source: "fpp",
-        submission: { email: "a@b.com" },
-        deliver,
-        classify: instantClassify(classifyResult()),
-        jev: jevAfter(jevOutcome(), 10),
-        record: submissions.recordSubmission,
-        attachJev: () => {
-          throw new Error("db locked");
+      await gate(submissions, {
+        classify: delayedClassify(
+          classifyResult({ verdict: "legit", confidence: 0.95 }),
+          50,
+        ),
+        deadlineMs: 5,
+        jevEnabled: () => true,
+        kickJev: () => {},
+      });
+      expect(submissions.listSubmissions().data).toHaveLength(0);
+
+      await Bun.sleep(80);
+
+      expect(submissions.listSubmissions().data[0]?.jev?.status).toBe(
+        "pending",
+      );
+    });
+
+    test("leaves the Jev state empty when Jev is disabled", async () => {
+      const submissions = testSubmissionsRepo();
+      let kicks = 0;
+
+      await gate(submissions, {
+        jevEnabled: () => false,
+        kickJev: () => kicks++,
+      });
+
+      expect(submissions.listSubmissions().data[0]?.jev).toBeNull();
+      expect(submissions.claimNextJev()).toBeNull();
+    });
+
+    test("a throwing kick never breaks the gate", async () => {
+      const submissions = testSubmissionsRepo();
+
+      const result = await gate(submissions, {
+        jevEnabled: () => true,
+        kickJev: () => {
+          throw new Error("boom");
         },
       });
-      await Bun.sleep(30);
 
       expect(result).toEqual({ delivered: true });
-      expect(calls).toHaveLength(1);
-      expect(submissions.listSubmissions().data[0]?.jev).toBeNull();
-    });
-
-    test("a rejecting or throwing injected Jev never breaks the gate", async () => {
-      for (const jev of [
-        () => Promise.reject(new Error("boom")),
-        () => {
-          throw new Error("sync boom");
-        },
-      ]) {
-        const { deliver, calls } = deliverSpy();
-        const submissions = testSubmissionsRepo();
-
-        const result = await gateSubmission({
-          source: "fpp",
-          submission: { email: "a@b.com" },
-          deliver,
-          classify: instantClassify(classifyResult()),
-          jev,
-          record: submissions.recordSubmission,
-          attachJev: submissions.attachJev,
-        });
-        await Bun.sleep(5);
-
-        expect(result).toEqual({ delivered: true });
-        expect(calls).toHaveLength(1);
-        expect(submissions.listSubmissions().data[0]?.jev).toBeNull();
-      }
-    });
-
-    test("leaves the Jev columns empty when Jev is disabled", async () => {
-      const { deliver } = deliverSpy();
-      const submissions = testSubmissionsRepo();
-
-      await gateSubmission({
-        source: "fpp",
-        submission: { email: "a@b.com" },
-        deliver,
-        classify: instantClassify(classifyResult()),
-        jev: () => null,
-        record: submissions.recordSubmission,
-        attachJev: submissions.attachJev,
-      });
-
-      expect(submissions.listSubmissions().data[0]?.jev).toBeNull();
+      expect(submissions.listSubmissions().data).toHaveLength(1);
     });
   });
 });

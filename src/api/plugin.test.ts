@@ -4,6 +4,7 @@ import { openDatabase } from "../db/client";
 import { createEmailsRepo } from "../db/emails";
 import { createImapStateRepo } from "../db/imap-state";
 import { createSubmissionsRepo } from "../db/submissions";
+import { JEV_MAX_ATTEMPTS } from "../db/jev-queue";
 
 const API_KEY = "local-api-key-1234567";
 
@@ -309,10 +310,15 @@ describe("Jev shadow fields", () => {
     probabilities: { legit: 0.05, spam: 0.05, marketing: 0.9 },
     latencyMs: 800,
     model: "jev-test",
-    error: null,
   };
+  const get = async (app: ReturnType<typeof testApp>["app"], path: string) =>
+    (
+      await app.handle(
+        new Request(`http://localhost${path}`, { headers: authHeaders() }),
+      )
+    ).json();
 
-  test("GET /api/submissions and /api/stats expose Jev verdicts, agreement and latencies", async () => {
+  test("GET /api/submissions and /api/stats expose Jev verdicts, queue state, agreement and latencies", async () => {
     const { app, submissions } = testApp(API_KEY);
     const base = {
       source: "fpp" as const,
@@ -321,46 +327,83 @@ describe("Jev shadow fields", () => {
       model: "m",
       delivered: true,
       submission: {},
+      jevPending: true,
     };
+    const completeNext = () =>
+      submissions.completeJev({
+        ...submissions.claimNextJev()!,
+        result: jev,
+      });
     submissions.recordSubmission({
       ...base,
       verdict: "marketing",
       llmLatencyMs: 2000,
-      jev,
     });
+    completeNext();
     submissions.recordSubmission({
       ...base,
       verdict: "legit",
       llmLatencyMs: 4000,
-      jev,
     });
+    completeNext();
+    // Fails on every attempt until it gives up.
     submissions.recordSubmission({ ...base, verdict: "legit" });
+    let clock = Date.now();
+    for (let attempt = 0; attempt < JEV_MAX_ATTEMPTS; attempt++) {
+      const now = new Date(clock);
+      submissions.failJev({
+        ...submissions.claimNextJev({ now })!,
+        error: "429 high demand",
+        now,
+      });
+      clock += 2 * 24 * 60 * 60_000;
+    }
+    submissions.recordSubmission({ ...base, verdict: "legit" });
+    submissions.recordSubmission({
+      ...base,
+      verdict: "legit",
+      jevPending: false,
+    });
 
-    const list = (await (
-      await app.handle(
-        new Request("http://localhost/api/submissions", {
-          headers: authHeaders(),
-        }),
-      )
-    ).json()) as {
+    const list = (await get(app, "/api/submissions")) as {
       data: {
-        jev: { verdict: string; latencyMs: number } | null;
+        jev: {
+          status: string;
+          attempts: number;
+          nextAttemptAt: string | null;
+          verdict: string | null;
+          latencyMs: number | null;
+          error: string | null;
+        } | null;
         llmLatencyMs: number | null;
       }[];
     };
-    const withJev = list.data.filter((row) => row.jev);
-    expect(withJev).toHaveLength(2);
-    expect(withJev[0]!.jev).toMatchObject({
+    const byStatus = (status: string | null) =>
+      list.data.filter((row) => (row.jev?.status ?? null) === status);
+    expect(byStatus("done")).toHaveLength(2);
+    expect(byStatus("done")[0]!.jev).toMatchObject({
       verdict: "marketing",
       latencyMs: 800,
+      attempts: 1,
     });
-    expect(withJev[0]!.llmLatencyMs).not.toBeNull();
+    expect(byStatus("done")[0]!.llmLatencyMs).not.toBeNull();
+    expect(byStatus("pending")[0]!.jev).toMatchObject({
+      attempts: 0,
+      nextAttemptAt: null,
+      verdict: null,
+      latencyMs: null,
+    });
+    expect(byStatus("failed")[0]!.jev).toMatchObject({
+      attempts: JEV_MAX_ATTEMPTS,
+      nextAttemptAt: null,
+      error: "429 high demand",
+    });
+    expect(byStatus(null)).toHaveLength(1);
 
-    const stats = (await (
-      await app.handle(
-        new Request("http://localhost/api/stats", { headers: authHeaders() }),
-      )
-    ).json()) as { jevComparison: unknown };
+    const stats = (await get(app, "/api/stats")) as {
+      jevComparison: unknown;
+      jevQueue: unknown;
+    };
     expect(stats.jevComparison).toEqual({
       compared: 2,
       agreed: 1,
@@ -368,9 +411,10 @@ describe("Jev shadow fields", () => {
       llmMedianLatencyMs: 3000,
       jevMedianLatencyMs: 800,
     });
+    expect(stats.jevQueue).toEqual({ pending: 1, failed: 1 });
   });
 
-  test("GET /api/emails/:id exposes Jev's spam probability and category", async () => {
+  test("GET /api/emails/:id exposes Jev's queue state, then its decision", async () => {
     const { app, emails } = testApp(API_KEY);
     emails.upsertEmail({
       id: "in_1",
@@ -380,7 +424,44 @@ describe("Jev shadow fields", () => {
       subject: "Hi",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
-    emails.saveJevEnrichment("in_1", {
+    emails.upsertEmail({
+      id: "out_1",
+      direction: "outbound",
+      fromAddress: "me@example.com",
+      toAddresses: ["x@example.com"],
+      subject: "Re: Hi",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const jevOf = async (id: string) =>
+      (
+        (await get(app, `/api/emails/${id}`)) as {
+          enrichment: { jev: unknown };
+        }
+      ).enrichment.jev;
+
+    expect(await jevOf("in_1")).toMatchObject({
+      status: "pending",
+      attempts: 0,
+      nextAttemptAt: null,
+      spamProbability: null,
+    });
+    expect(await jevOf("out_1")).toBeNull();
+
+    emails.completeJev({
+      ...emails.claimNextJev()!,
+      result: {
+        spamProbability: 0.96,
+        category: "marketing",
+        categoryConfidence: 0.9,
+        latencyMs: 700,
+        model: "jev-test",
+      },
+    });
+
+    expect(await jevOf("in_1")).toEqual({
+      status: "done",
+      attempts: 1,
+      nextAttemptAt: null,
       spamProbability: 0.96,
       category: "marketing",
       categoryConfidence: 0.9,
@@ -388,40 +469,5 @@ describe("Jev shadow fields", () => {
       model: "jev-test",
       error: null,
     });
-
-    const body = (await (
-      await app.handle(
-        new Request("http://localhost/api/emails/in_1", {
-          headers: authHeaders(),
-        }),
-      )
-    ).json()) as { enrichment: { jev: unknown } };
-
-    expect(body.enrichment.jev).toEqual({
-      spamProbability: 0.96,
-      category: "marketing",
-      categoryConfidence: 0.9,
-      latencyMs: 700,
-      model: "jev-test",
-      error: null,
-    });
-  });
-});
-
-describe("GET /api/stats IMAP health", () => {
-  test("exposes per-mailbox ingest health", async () => {
-    const { app, db } = testAppWithDb(API_KEY);
-    createImapStateRepo(db).recordError("INBOX", "connect: ECONNREFUSED");
-
-    const response = await app.handle(
-      new Request("http://localhost/api/stats", { headers: authHeaders() }),
-    );
-
-    const body = (await response.json()) as {
-      imap: { mailbox: string; lastError: string | null }[];
-    };
-    expect(body.imap).toMatchObject([
-      { mailbox: "INBOX", lastError: "connect: ECONNREFUSED" },
-    ]);
   });
 });

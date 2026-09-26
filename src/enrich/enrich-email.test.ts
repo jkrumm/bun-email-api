@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { MockLanguageModelV4 } from "ai/test";
 import { enrichEmail } from "./enrich-email";
 import { openDatabase } from "../db/client";
-import { createEmailsRepo, type JevEnrichment } from "../db/emails";
+import { createEmailsRepo } from "../db/emails";
 import { reEnrichEmail } from "./re-enrich";
 
 function mockUsage() {
@@ -125,19 +125,11 @@ describe("enrichEmail", () => {
   });
 });
 
-describe("Jev shadow enrichment", () => {
+describe("Jev queueing on re-enrich", () => {
   const inbound = {
     id: "email_1",
     ...baseEmail,
     direction: "inbound" as const,
-  };
-  const jevResult: JevEnrichment = {
-    spamProbability: 0.96,
-    category: "marketing",
-    categoryConfidence: 0.9,
-    latencyMs: 15,
-    model: "jev-test",
-    error: null,
   };
 
   function seededEmails(direction: "inbound" | "outbound" = "inbound") {
@@ -160,88 +152,42 @@ describe("Jev shadow enrichment", () => {
       result: { ...validEnrichment, model: "m" },
     });
 
-  test("stores Jev's decisions next to the untouched LLM fields", async () => {
+  test("re-queues an inbound email's Jev decision, clearing the previous one, and kicks the worker", async () => {
     const emails = seededEmails();
-    await reEnrichEmail({
-      emails,
-      id: "email_1",
-      enrich: llmOk,
-      judgeJev: () => Promise.resolve(jevResult),
+    emails.completeJev({
+      ...emails.claimNextJev()!,
+      result: {
+        spamProbability: 0.96,
+        category: "marketing",
+        categoryConfidence: 0.9,
+        latencyMs: 15,
+        model: "jev-test",
+      },
     });
-    await Bun.sleep(5);
-
-    const { enrichment } = emails.getEmail("email_1")!;
-    expect(enrichment.status).toBe("done");
-    expect(enrichment.category).toBe("inquiry");
-    expect(enrichment.jev).toEqual(jevResult);
-  });
-
-  test("a never-resolving Jev does not hold back the LLM result", async () => {
-    const emails = seededEmails();
-    const result = await reEnrichEmail({
-      emails,
-      id: "email_1",
-      enrich: llmOk,
-      judgeJev: () => new Promise<JevEnrichment>(() => {}),
-    });
-
-    expect(result.status).toBe("ok");
-    const { enrichment } = emails.getEmail("email_1")!;
-    expect(enrichment.status).toBe("done");
-    expect(enrichment.jev).toBeNull();
-  });
-
-  test("a Jev error result does not fail the LLM enrichment", async () => {
-    const emails = seededEmails();
-    await reEnrichEmail({
-      emails,
-      id: "email_1",
-      enrich: llmOk,
-      judgeJev: () =>
-        Promise.resolve({
-          ...jevResult,
-          spamProbability: null,
-          category: null,
-          categoryConfidence: null,
-          error: "Jev request failed: 529",
-        }),
-    });
-    await Bun.sleep(5);
-
-    const { enrichment } = emails.getEmail("email_1")!;
-    expect(enrichment.status).toBe("done");
-    expect(enrichment.jev?.error).toBe("Jev request failed: 529");
-  });
-
-  test("a rejecting Jev judge or a failing Jev write never fails the run", async () => {
-    const emails = seededEmails();
-    emails.saveJevEnrichment = () => {
-      throw new Error("db locked");
-    };
+    let kicks = 0;
 
     const result = await reEnrichEmail({
       emails,
       id: "email_1",
       enrich: llmOk,
-      judgeJev: () => Promise.resolve(jevResult),
+      kickJev: () => kicks++,
     });
-    await Bun.sleep(5);
 
     expect(result.status).toBe("ok");
-    expect(emails.getEmail("email_1")!.enrichment.status).toBe("done");
-
-    const emails2 = seededEmails();
-    const result2 = await reEnrichEmail({
-      emails: emails2,
-      id: "email_1",
-      enrich: llmOk,
-      judgeJev: () => Promise.reject(new Error("boom")),
+    expect(kicks).toBe(1);
+    const { enrichment } = emails.getEmail("email_1")!;
+    expect(enrichment.status).toBe("done");
+    expect(enrichment.jev).toMatchObject({
+      status: "pending",
+      attempts: 0,
+      category: null,
+      model: null,
     });
-    expect(result2.status).toBe("ok");
   });
 
-  test("an LLM failure still keeps Jev's decisions", async () => {
+  test("an LLM failure leaves Jev queued: the two are independent", async () => {
     const emails = seededEmails();
+
     await reEnrichEmail({
       emails,
       id: "email_1",
@@ -250,56 +196,26 @@ describe("Jev shadow enrichment", () => {
           email: inbound,
           model: mockModelThrowing("connection refused"),
         }),
-      judgeJev: () => Promise.resolve(jevResult),
+      kickJev: () => {},
     });
-    await Bun.sleep(5);
 
     const { enrichment } = emails.getEmail("email_1")!;
     expect(enrichment.status).toBe("failed");
-    expect(enrichment.jev?.category).toBe("marketing");
+    expect(enrichment.jev?.status).toBe("pending");
   });
 
-  test("never invokes Jev for outbound mail", async () => {
+  test("outbound mail is never queued for Jev", async () => {
     const emails = seededEmails("outbound");
-    let calls = 0;
-    await reEnrichEmail({
-      emails,
-      id: "email_1",
-      enrich: llmOk,
-      judgeJev: () => {
-        calls++;
-        return Promise.resolve(jevResult);
-      },
-    });
-
-    expect(calls).toBe(0);
-    expect(emails.getEmail("email_1")!.enrichment.jev).toBeNull();
-  });
-
-  test("Jev disabled leaves the enrichment's jev view null", async () => {
-    const emails = seededEmails();
-    await reEnrichEmail({
-      emails,
-      id: "email_1",
-      enrich: llmOk,
-      judgeJev: () => null,
-    });
-
-    expect(emails.getEmail("email_1")!.enrichment.jev).toBeNull();
-  });
-
-  test("a re-run clears the previous Jev columns", async () => {
-    const emails = seededEmails();
-    emails.saveJevEnrichment("email_1", jevResult);
 
     await reEnrichEmail({
       emails,
       id: "email_1",
       enrich: llmOk,
-      judgeJev: () => null,
+      kickJev: () => {},
     });
 
     expect(emails.getEmail("email_1")!.enrichment.jev).toBeNull();
+    expect(emails.claimNextJev()).toBeNull();
   });
 });
 

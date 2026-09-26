@@ -12,6 +12,7 @@ import type {
   EmailWithEnrichment,
 } from "../db/emails";
 import type { ImapStateRepo } from "../db/imap-state";
+import { sumJevQueue } from "../db/jev-queue";
 import type {
   SubmissionsRepo,
   SubmissionSource,
@@ -200,6 +201,10 @@ export function createAdminRoutes({
         <OverviewPage
           stats={stats}
           jevComparison={submissions.getJevComparison({ since })}
+          jevQueue={sumJevQueue(
+            emails.jevQueueCounts(),
+            submissions.jevQueueCounts(),
+          )}
           needsAction={
             emails.listEmails({ actionRequired: true, limit: 8 }).data
           }

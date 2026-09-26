@@ -135,3 +135,169 @@ describe("migration 5", () => {
     expect(row).toEqual({ provider: "resend", mailbox: null });
   });
 });
+
+describe("migration 6", () => {
+  function seedV5() {
+    const db = new Database(":memory:");
+    runMigrations(db, { targetVersion: 5 });
+
+    const submission = (id: string, jev: string) =>
+      db.run(
+        `INSERT INTO submissions (id, received_at, source, verdict, confidence, reason, delivered, submission,
+           jev_verdict, jev_confidence, jev_latency_ms, jev_model, jev_error)
+         VALUES ('${id}', '2026-09-15T08:00:00.000Z', 'fpp', 'legit', 0.9, 'r', 1, '{"message":"hi"}', ${jev})`,
+      );
+    submission("s_none", "NULL, NULL, NULL, NULL, NULL");
+    submission("s_ok", "'spam', 0.9, 800, 'jev', NULL");
+    submission("s_err", "NULL, NULL, 30, 'jev', 'gateway 429'");
+    // Error/model set but no verdict: still not a successful result.
+    submission("s_model_only", "NULL, NULL, NULL, 'jev', NULL");
+
+    const email = (id: string, direction: string) => {
+      db.run(
+        `INSERT INTO emails (id, direction, from_address, to_addresses, subject, created_at, attachments, synced_at)
+         VALUES ('${id}', '${direction}', 'a@example.com', '[]', 's', '2026-09-15T07:00:00.000Z', '[]', '2026-09-15T08:00:00.000Z')`,
+      );
+    };
+    const enrichment = (id: string, jev: string) =>
+      db.run(
+        `INSERT INTO email_enrichments (email_id, status, attempts, updated_at,
+           jev_spam_probability, jev_category, jev_category_confidence, jev_latency_ms, jev_model, jev_error)
+         VALUES ('${id}', 'done', 1, '2026-09-15T08:00:00.000Z', ${jev})`,
+      );
+    email("in_none", "inbound");
+    enrichment("in_none", "NULL, NULL, NULL, NULL, NULL, NULL");
+    email("in_ok", "inbound");
+    enrichment("in_ok", "0.1, 'inquiry', 0.8, 400, 'jev', NULL");
+    email("in_err", "inbound");
+    enrichment("in_err", "NULL, NULL, NULL, 30, 'jev', 'gateway 429'");
+    email("out_1", "outbound");
+    enrichment("out_1", "NULL, NULL, NULL, NULL, NULL, NULL");
+    // Inbound email whose enrichment row was lost.
+    email("in_orphan", "inbound");
+
+    runMigrations(db);
+    return db;
+  }
+
+  test("adds the queue columns to both tables", () => {
+    const db = seedV5();
+    const columns = (table: string) =>
+      db
+        .query<{ name: string }, []>(`PRAGMA table_info(${table})`)
+        .all()
+        .map((row) => row.name);
+
+    for (const table of ["submissions", "email_enrichments"]) {
+      expect(columns(table)).toEqual(
+        expect.arrayContaining([
+          "jev_status",
+          "jev_attempts",
+          "jev_next_attempt_at",
+          "jev_claimed_at",
+        ]),
+      );
+    }
+  });
+
+  test("backfills submissions: no or failed result → pending, successful → done", () => {
+    const db = seedV5();
+    const rows = db
+      .query<Record<string, unknown>, []>(
+        "SELECT id, jev_status, jev_attempts, jev_verdict, jev_model, jev_error FROM submissions ORDER BY id",
+      )
+      .all();
+
+    expect(rows).toEqual([
+      {
+        id: "s_err",
+        jev_status: "pending",
+        jev_attempts: 0,
+        jev_verdict: null,
+        jev_model: null,
+        jev_error: null,
+      },
+      {
+        id: "s_model_only",
+        jev_status: "pending",
+        jev_attempts: 0,
+        jev_verdict: null,
+        jev_model: null,
+        jev_error: null,
+      },
+      {
+        id: "s_none",
+        jev_status: "pending",
+        jev_attempts: 0,
+        jev_verdict: null,
+        jev_model: null,
+        jev_error: null,
+      },
+      {
+        id: "s_ok",
+        jev_status: "done",
+        jev_attempts: 1,
+        jev_verdict: "spam",
+        jev_model: "jev",
+        jev_error: null,
+      },
+    ]);
+  });
+
+  test("creates partial indexes on the pending queue rows", () => {
+    const db = seedV5();
+    const indexes = db
+      .query<{ name: string; sql: string }, []>(
+        "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name LIKE '%jev_status'",
+      )
+      .all();
+
+    expect(indexes.map((index) => index.name).sort()).toEqual([
+      "idx_email_enrichments_jev_status",
+      "idx_submissions_jev_status",
+    ]);
+    for (const index of indexes) expect(index.sql).toContain("WHERE");
+  });
+
+  test("backfills inbound enrichments pending/done, outbound NULL, and creates a lost row", () => {
+    const db = seedV5();
+    const rows = db
+      .query<Record<string, unknown>, []>(
+        "SELECT email_id, jev_status, jev_category, jev_error FROM email_enrichments ORDER BY email_id",
+      )
+      .all();
+
+    expect(rows).toEqual([
+      {
+        email_id: "in_err",
+        jev_status: "pending",
+        jev_category: null,
+        jev_error: null,
+      },
+      {
+        email_id: "in_none",
+        jev_status: "pending",
+        jev_category: null,
+        jev_error: null,
+      },
+      {
+        email_id: "in_ok",
+        jev_status: "done",
+        jev_category: "inquiry",
+        jev_error: null,
+      },
+      {
+        email_id: "in_orphan",
+        jev_status: "pending",
+        jev_category: null,
+        jev_error: null,
+      },
+      {
+        email_id: "out_1",
+        jev_status: null,
+        jev_category: null,
+        jev_error: null,
+      },
+    ]);
+  });
+});

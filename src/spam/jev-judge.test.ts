@@ -36,7 +36,6 @@ describe("judgeSubmissionWithJev", () => {
       confidence: 0.93,
       probabilities: { legit: 0, spam: 0, marketing: 1 },
       model: "typesafe-ai/jev",
-      error: null,
     });
     expect(outcome.latencyMs).toBeGreaterThanOrEqual(0);
     const state = calls[0]!.state as Record<string, unknown>;
@@ -44,19 +43,18 @@ describe("judgeSubmissionWithJev", () => {
     expect(JSON.stringify(state.sites)).toContain("yacht charter");
   });
 
-  test("captures a failure as an error outcome instead of rejecting", async () => {
+  test("rejects when the call fails so the queue can retry", async () => {
     const { model } = fakeJevModel(() => {
       throw new Error("gateway 529");
     });
 
-    const outcome = await judgeSubmissionWithJev({
-      source: "sy-serendipity",
-      submission: {},
-      config,
-      model,
-    })!;
-
-    expect(outcome.verdict).toBeNull();
-    expect(outcome.error).toContain("529");
+    await expect(
+      judgeSubmissionWithJev({
+        source: "sy-serendipity",
+        submission: {},
+        config,
+        model,
+      })!,
+    ).rejects.toThrow("529");
   });
 });

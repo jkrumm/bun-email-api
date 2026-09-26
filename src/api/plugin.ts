@@ -11,6 +11,7 @@ import type {
   EnrichmentStatus,
 } from "../db/emails";
 import type { ImapStateRepo } from "../db/imap-state";
+import { sumJevQueue } from "../db/jev-queue";
 import type {
   SubmissionsRepo,
   SubmissionSource,
@@ -167,6 +168,10 @@ export function createApiRoutes({
         return {
           ...emails.emailStats({ since }),
           jevComparison: submissions.getJevComparison({ since }),
+          jevQueue: sumJevQueue(
+            emails.jevQueueCounts(),
+            submissions.jevQueueCounts(),
+          ),
           // Per-mailbox IMAP health, so a dead Bridge is visible.
           imap: imapState.listHealth(),
         };

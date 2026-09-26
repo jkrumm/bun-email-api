@@ -137,49 +137,40 @@ describe("decideShadow", () => {
   test("returns null when disabled", () => {
     expect(
       decideShadow({
-        label: "t",
         state: "x",
         questions: shadowQuestions,
         pick,
-        empty: { spam: null },
         config: null,
       }),
     ).toBeNull();
   });
 
-  test("maps answers on success and folds failures into `error`", async () => {
+  test("maps answers with latency and model on success, and rejects on failure", async () => {
     const ok = fakeJevModel(() => ({
       answers: { is_spam: rawAnswers.is_spam },
       warnings: [],
     }));
     const success = await decideShadow({
-      label: "t",
       state: "x",
       questions: shadowQuestions,
       pick,
-      empty: { spam: null },
       config,
       model: ok.model,
     })!;
-    expect(success).toMatchObject({
-      spam: 0.96,
-      model: "typesafe-ai/jev",
-      error: null,
-    });
+    expect(success).toMatchObject({ spam: 0.96, model: "typesafe-ai/jev" });
+    expect(success.latencyMs).toBeGreaterThanOrEqual(0);
 
     const bad = fakeJevModel(() => {
       throw new Error("gateway 529");
     });
-    const failure = await decideShadow({
-      label: "t",
-      state: "x",
-      questions: shadowQuestions,
-      pick,
-      empty: { spam: null },
-      config,
-      model: bad.model,
-    })!;
-    expect(failure.spam).toBeNull();
-    expect(failure.error).toContain("gateway 529");
+    await expect(
+      decideShadow({
+        state: "x",
+        questions: shadowQuestions,
+        pick,
+        config,
+        model: bad.model,
+      })!,
+    ).rejects.toThrow("gateway 529");
   });
 });

@@ -1,16 +1,30 @@
 import type { Database } from "bun:sqlite";
+import { createJevQueue, type JevClaim, type JevStatus } from "./jev-queue";
 
 export type SubmissionSource = "fpp" | "sy-serendipity";
 export type Verdict = "legit" | "spam" | "marketing";
 
-// Jev's shadow verdict. On failure verdict/confidence/probabilities are null
-// and `error` carries the reason.
-export interface JevSubmissionView {
-  verdict: Verdict | null;
-  confidence: number | null;
+// A successful Jev call on a submission.
+export interface JevSubmissionResult {
+  verdict: Verdict;
+  confidence: number;
   probabilities: Record<string, number> | null;
   latencyMs: number;
   model: string;
+}
+
+// Jev's shadow verdict as stored on the row. The verdict fields are only set
+// when `status` is "done"; `error` is the last failure (pending retry, or
+// terminal when "failed").
+export interface JevSubmissionView {
+  status: JevStatus;
+  attempts: number;
+  nextAttemptAt: string | null;
+  verdict: Verdict | null;
+  confidence: number | null;
+  probabilities: Record<string, number> | null;
+  latencyMs: number | null;
+  model: string | null;
   error: string | null;
 }
 
@@ -25,7 +39,7 @@ export interface SubmissionRecord {
   delivered: boolean;
   submission: Record<string, string | number | null>;
   llmLatencyMs: number | null;
-  // Null while Jev is pending, or when it is disabled.
+  // Null when Jev was disabled at record time.
   jev: JevSubmissionView | null;
 }
 
@@ -38,8 +52,16 @@ export interface RecordSubmissionInput {
   delivered: boolean;
   submission: Record<string, string | number | null>;
   llmLatencyMs?: number | null;
-  jev?: JevSubmissionView | null;
+  // Queue the row for the Jev worker (Jev is configured).
+  jevPending?: boolean;
 }
+
+// What the Jev worker needs to judge a claimed submission (`submission` is
+// the raw stored JSON).
+type ClaimedJevSubmission = JevClaim & {
+  source: SubmissionSource;
+  submission: string;
+};
 
 export interface ListSubmissionsFilters {
   verdict?: Verdict;
@@ -82,6 +104,9 @@ interface SubmissionRow {
   jev_latency_ms: number | null;
   jev_model: string | null;
   jev_error: string | null;
+  jev_status: JevStatus | null;
+  jev_attempts: number;
+  jev_next_attempt_at: string | null;
 }
 
 function toSubmissionRecord(row: SubmissionRow): SubmissionRecord {
@@ -96,19 +121,21 @@ function toSubmissionRecord(row: SubmissionRow): SubmissionRecord {
     delivered: Boolean(row.delivered),
     submission: JSON.parse(row.submission),
     llmLatencyMs: row.llm_latency_ms,
-    jev:
-      row.jev_model === null || row.jev_model === undefined
-        ? null
-        : {
-            verdict: row.jev_verdict,
-            confidence: row.jev_confidence,
-            probabilities: row.jev_probabilities
-              ? JSON.parse(row.jev_probabilities)
-              : null,
-            latencyMs: row.jev_latency_ms ?? 0,
-            model: row.jev_model,
-            error: row.jev_error,
-          },
+    jev: row.jev_status
+      ? {
+          status: row.jev_status,
+          attempts: row.jev_attempts,
+          nextAttemptAt: row.jev_next_attempt_at,
+          verdict: row.jev_verdict,
+          confidence: row.jev_confidence,
+          probabilities: row.jev_probabilities
+            ? JSON.parse(row.jev_probabilities)
+            : null,
+          latencyMs: row.jev_latency_ms,
+          model: row.jev_model,
+          error: row.jev_error,
+        }
+      : null,
   };
 }
 
@@ -128,6 +155,20 @@ function decodeCursor(cursor: string): { receivedAt: string; id: string } {
   };
 }
 
+function pendingJevView(): JevSubmissionView {
+  return {
+    status: "pending",
+    attempts: 0,
+    nextAttemptAt: null,
+    verdict: null,
+    confidence: null,
+    probabilities: null,
+    latencyMs: null,
+    model: null,
+    error: null,
+  };
+}
+
 function median(values: number[]): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -137,23 +178,13 @@ function median(values: number[]): number | null {
     : (sorted[mid - 1]! + sorted[mid]!) / 2;
 }
 
-function jevParams(jev: JevSubmissionView | null): (string | number | null)[] {
-  return [
-    jev?.verdict ?? null,
-    jev?.confidence ?? null,
-    jev?.probabilities ? JSON.stringify(jev.probabilities) : null,
-    jev?.latencyMs ?? null,
-    jev?.model ?? null,
-    jev?.error ?? null,
-  ];
-}
-
 export function createSubmissionsRepo(db: Database) {
   function recordSubmission(input: RecordSubmissionInput): SubmissionRecord {
+    const { jevPending: _jevPending, ...persisted } = input;
     const record: SubmissionRecord = {
-      ...input,
+      ...persisted,
       llmLatencyMs: input.llmLatencyMs ?? null,
-      jev: input.jev ?? null,
+      jev: input.jevPending ? pendingJevView() : null,
       id: crypto.randomUUID(),
       receivedAt: new Date().toISOString(),
     };
@@ -161,9 +192,8 @@ export function createSubmissionsRepo(db: Database) {
     db.run(
       `INSERT INTO submissions (
          id, received_at, source, verdict, confidence, reason, model, delivered, submission,
-         llm_latency_ms, jev_verdict, jev_confidence, jev_probabilities,
-         jev_latency_ms, jev_model, jev_error
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         llm_latency_ms, jev_status
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         record.id,
         record.receivedAt,
@@ -175,22 +205,50 @@ export function createSubmissionsRepo(db: Database) {
         record.delivered ? 1 : 0,
         JSON.stringify(record.submission),
         record.llmLatencyMs,
-        ...jevParams(record.jev),
+        record.jev?.status ?? null,
       ],
     );
 
     return record;
   }
 
-  // Jev may land after the row was written (it never holds up the gate).
-  function attachJev(id: string, jev: JevSubmissionView): void {
-    db.run(
-      `UPDATE submissions SET
-         jev_verdict = ?, jev_confidence = ?, jev_probabilities = ?,
-         jev_latency_ms = ?, jev_model = ?, jev_error = ?
-       WHERE id = ?`,
-      [...jevParams(jev), id],
-    );
+  const jevQueue = createJevQueue({
+    db,
+    table: "submissions",
+    idColumn: "id",
+    orderColumn: "received_at",
+  });
+
+  // Claims the next submission whose Jev verdict is due. `submission` is the
+  // raw stored JSON — the worker parses it per row so one bad row can't
+  // abort the drain.
+  function claimNextJev({
+    now,
+  }: { now?: Date } = {}): ClaimedJevSubmission | null {
+    return jevQueue.claimNext<{
+      source: SubmissionSource;
+      submission: string;
+    }>({ now, extraColumns: ["source", "submission"] });
+  }
+
+  function completeJev({
+    id,
+    claimToken,
+    result,
+  }: JevClaim & { result: JevSubmissionResult }): boolean {
+    return jevQueue.complete({
+      id,
+      claimToken,
+      result: {
+        jev_verdict: result.verdict,
+        jev_confidence: result.confidence,
+        jev_probabilities: result.probabilities
+          ? JSON.stringify(result.probabilities)
+          : null,
+        jev_latency_ms: result.latencyMs,
+        jev_model: result.model,
+      },
+    });
   }
 
   function listSubmissions(
@@ -253,7 +311,7 @@ export function createSubmissionsRepo(db: Database) {
         `SELECT COUNT(jev_verdict) AS compared,
                 SUM(jev_verdict = verdict) AS agreed
          FROM submissions
-         WHERE received_at >= ?`,
+         WHERE received_at >= ? AND jev_status = 'done'`,
       )
       .get(since)!;
 
@@ -264,7 +322,7 @@ export function createSubmissionsRepo(db: Database) {
       >(
         `SELECT llm_latency_ms, jev_latency_ms
          FROM submissions
-         WHERE received_at >= ? AND jev_latency_ms IS NOT NULL`,
+         WHERE received_at >= ? AND jev_status = 'done' AND jev_latency_ms IS NOT NULL`,
       )
       .all(since);
 
@@ -281,7 +339,15 @@ export function createSubmissionsRepo(db: Database) {
     };
   }
 
-  return { recordSubmission, attachJev, listSubmissions, getJevComparison };
+  return {
+    recordSubmission,
+    claimNextJev,
+    completeJev,
+    failJev: jevQueue.fail,
+    jevQueueCounts: jevQueue.counts,
+    listSubmissions,
+    getJevComparison,
+  };
 }
 
 export type SubmissionsRepo = ReturnType<typeof createSubmissionsRepo>;

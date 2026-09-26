@@ -36,15 +36,12 @@ interface JevDecision<Questions extends Record<string, EvaluationQuestion>> {
 // Single model requests get a hang guard, never a tight timeout (house rule,
 // see src/spam/classify.ts).
 const JEV_HANG_GUARD_MS = 30 * 60_000;
-// Jev's upstream intermittently answers 429 "high demand"; every Jev call is
-// detached shadow work, so riding out ~1 min of SDK backoff costs nothing.
-const JEV_MAX_RETRIES = 5;
 
 const confidenceSchema = z.object({
   confidence: z.record(z.string(), z.number().min(0).max(1)),
 });
 
-function getJevConfig(): JevConfig | null {
+export function getJevConfig(): JevConfig | null {
   const { BEA_JEV_API_KEY, BEA_JEV_MODEL } = env;
   if (!BEA_JEV_API_KEY) return null;
   return { apiKey: BEA_JEV_API_KEY, model: BEA_JEV_MODEL };
@@ -72,7 +69,6 @@ export async function decide<
       createGateway({ apiKey: config.apiKey }).evaluation(config.model),
     state,
     questions,
-    maxRetries: JEV_MAX_RETRIES,
     abortSignal: AbortSignal.timeout(JEV_HANG_GUARD_MS),
   });
 
@@ -100,55 +96,37 @@ export async function decide<
   return { answers: answers as JevDecision<Questions>["answers"] };
 }
 
-interface JevShadowMeta {
+interface JevCallMeta {
   latencyMs: number;
   model: string;
-  error: string | null;
 }
 
-// The one never-rejecting wrapper for shadow-mode callers: runs `decide`,
-// maps the answers with `pick`, and turns any failure into `empty` plus an
-// `error` string, so a Jev problem can never propagate into the authoritative
-// path. Returns null when Jev is disabled (no API key).
+// Runs `decide` and maps the answers with `pick`, adding latency and model.
+// Returns null when Jev is disabled (no API key); rejects on failure — the
+// Jev queue worker (src/jev/worker.ts) owns retries and backoff.
 export function decideShadow<
   const Questions extends Record<string, EvaluationQuestion>,
   Fields extends object,
 >({
-  label,
   state,
   questions,
   pick,
-  empty,
   config = getJevConfig(),
   model,
 }: {
-  label: string;
   state: JevState;
   questions: Questions;
   pick: (answers: JevDecision<Questions>["answers"]) => Fields;
-  empty: { [Key in keyof Fields]: null };
   config?: JevConfig | null;
   model?: EvaluationModel;
-}): Promise<(Fields | { [Key in keyof Fields]: null }) & JevShadowMeta> | null {
+}): Promise<Fields & JevCallMeta> | null {
   if (!config) return null;
 
   const startedAt = Date.now();
 
-  return decide({ config, model, state, questions }).then(
-    ({ answers }) => ({
-      ...pick(answers),
-      latencyMs: Date.now() - startedAt,
-      model: config.model,
-      error: null,
-    }),
-    (error) => {
-      console.error(`Jev ${label} judgement failed`, { error });
-      return {
-        ...empty,
-        latencyMs: Date.now() - startedAt,
-        model: config.model,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    },
-  );
+  return decide({ config, model, state, questions }).then(({ answers }) => ({
+    ...pick(answers),
+    latencyMs: Date.now() - startedAt,
+    model: config.model,
+  }));
 }

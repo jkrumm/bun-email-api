@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { db as defaultDb } from "../db/client";
 import { errorMessage } from "../utils/error";
 import { runEnrichmentBatch } from "../enrich/worker";
+import { kickJevWorker } from "../jev/worker";
 import { adminResend } from "../utils/resend";
 import { imapConfigFromEnv } from "./imap-config";
 import { createImapflowPort, type ImapPort } from "./imap-port";
@@ -15,17 +16,19 @@ const FIRST_RUN_DELAY_MS = 5_000;
 
 // Composition root for every ingest source: owns the "one sync at a time"
 // lock, isolates each source's failure from the others, and decides whether
-// the enrichment worker needs a kick.
+// the enrichment and Jev workers need a kick.
 export function createSyncRunner({
   db,
   resend,
   imap,
   enrich,
+  kickJev = kickJevWorker,
 }: {
   db: Database;
   resend: AdminResend;
   imap?: { port: ImapPort; mailboxes: string[] };
   enrich: () => Promise<void>;
+  kickJev?: () => void;
 }) {
   let syncing = false;
 
@@ -72,6 +75,7 @@ export function createSyncRunner({
         summary.inbound.new > 0 ||
         (summary.imap?.new ?? 0) > 0
       ) {
+        kickJev();
         void Promise.resolve()
           .then(enrich)
           .catch((error) => {

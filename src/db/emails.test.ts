@@ -264,48 +264,105 @@ describe("upsertEmail atomicity", () => {
   });
 });
 
-describe("saveJevEnrichment", () => {
-  const jev = {
+describe("Jev queue (emails)", () => {
+  const result = {
     spamProbability: 0.1,
     category: "inquiry",
     categoryConfidence: 0.8,
     latencyMs: 400,
     model: "jev-test",
-    error: null,
   };
 
-  test("round-trips through getEmail and listEmails", () => {
-    const emails = createEmailsRepo(openDatabase(":memory:"));
-    emails.upsertEmail({
-      id: "in_1",
-      direction: "inbound",
-      fromAddress: "a@example.com",
-      toAddresses: ["me@example.com"],
-      subject: "s",
-      createdAt: "2026-01-01T00:00:00.000Z",
-    });
-    emails.saveJevEnrichment("in_1", jev);
+  function withInbound() {
+    const emails = repo();
+    emails.upsertEmail(baseEmail({ id: "in_1", direction: "inbound" }));
+    return emails;
+  }
 
-    expect(emails.getEmail("in_1")!.enrichment.jev).toEqual(jev);
-    expect(emails.listEmails().data[0]!.enrichment.jev).toEqual(jev);
+  test("inbound emails are queued, outbound ones are not judged", () => {
+    const emails = repo();
+    emails.upsertEmail(baseEmail({ id: "in_1", direction: "inbound" }));
+    emails.upsertEmail(baseEmail({ id: "out_1", direction: "outbound" }));
+
+    expect(emails.getEmail("in_1")!.enrichment.jev).toMatchObject({
+      status: "pending",
+      attempts: 0,
+      nextAttemptAt: null,
+      model: null,
+    });
+    expect(emails.getEmail("out_1")!.enrichment.jev).toBeNull();
+    expect(emails.claimNextJev()?.id).toBe("in_1");
+    expect(emails.claimNextJev()).toBeNull();
   });
 
-  test("creates the enrichment row when none exists instead of no-op'ing", () => {
-    const db = openDatabase(":memory:");
-    const emails = createEmailsRepo(db);
-    emails.upsertEmail({
-      id: "in_1",
-      direction: "inbound",
-      fromAddress: "a@example.com",
-      toAddresses: [],
-      subject: "s",
-      createdAt: "2026-01-01T00:00:00.000Z",
+  test("a re-upsert never resets an existing queue state", () => {
+    const emails = withInbound();
+    emails.completeJev({ ...emails.claimNextJev()!, result });
+
+    emails.upsertEmail(baseEmail({ id: "in_1", direction: "inbound" }));
+
+    expect(emails.getEmail("in_1")!.enrichment.jev?.status).toBe("done");
+  });
+
+  test("completeJev round-trips through getEmail and listEmails", () => {
+    const emails = withInbound();
+    emails.completeJev({ ...emails.claimNextJev()!, result });
+
+    const expected = {
+      ...result,
+      status: "done" as const,
+      attempts: 1,
+      nextAttemptAt: null,
+      error: null,
+    };
+    expect(emails.getEmail("in_1")!.enrichment.jev).toEqual(expected);
+    expect(emails.listEmails().data[0]!.enrichment.jev).toEqual(expected);
+  });
+
+  test("resetEnrichment re-queues inbound emails and clears the previous decision", () => {
+    const emails = withInbound();
+    emails.completeJev({ ...emails.claimNextJev()!, result });
+
+    emails.resetEnrichment("in_1");
+
+    expect(emails.getEmail("in_1")!.enrichment.jev).toEqual({
+      status: "pending",
+      attempts: 0,
+      nextAttemptAt: null,
+      spamProbability: null,
+      category: null,
+      categoryConfidence: null,
+      latencyMs: null,
+      model: null,
+      error: null,
     });
-    db.run("DELETE FROM email_enrichments");
+  });
 
-    emails.saveJevEnrichment("in_1", jev);
+  test("resetEnrichment leaves outbound emails out of the queue", () => {
+    const emails = repo();
+    emails.upsertEmail(baseEmail({ id: "out_1", direction: "outbound" }));
 
-    expect(emails.getEmail("in_1")!.enrichment.jev).toEqual(jev);
+    emails.resetEnrichment("out_1");
+
+    expect(emails.getEmail("out_1")!.enrichment.jev).toBeNull();
+  });
+
+  test("a re-queue during a claim voids the old claim's late write", () => {
+    const emails = withInbound();
+    const claim = emails.claimNextJev()!;
+
+    emails.resetEnrichment("in_1");
+
+    expect(emails.completeJev({ ...claim, result })).toBe(false);
+    expect(emails.failJev({ ...claim, error: "late" })).toBe(false);
+    expect(emails.getEmail("in_1")!.enrichment.jev).toMatchObject({
+      status: "pending",
+      attempts: 0,
+      model: null,
+      error: null,
+    });
+    // The re-queued row is claimable again by its new owner.
+    expect(emails.claimNextJev()?.id).toBe("in_1");
   });
 });
 

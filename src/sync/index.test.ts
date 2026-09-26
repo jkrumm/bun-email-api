@@ -80,6 +80,7 @@ function setup({
 }) {
   const db = openDatabase(":memory:");
   let enrichCalls = 0;
+  let jevKicks = 0;
   const runner = createSyncRunner({
     db,
     resend,
@@ -87,8 +88,16 @@ function setup({
     enrich: async () => {
       enrichCalls++;
     },
+    kickJev: () => {
+      jevKicks++;
+    },
   });
-  return { runner, enrichCalls: () => enrichCalls };
+  return {
+    db,
+    runner,
+    enrichCalls: () => enrichCalls,
+    jevKicks: () => jevKicks,
+  };
 }
 
 async function flush() {
@@ -111,6 +120,24 @@ describe("createSyncRunner.runAllSources", () => {
       errors: [],
     });
     expect(enrichCalls()).toBe(1);
+  });
+
+  test("queues synced inbound mail for Jev and kicks the Jev worker", async () => {
+    const { db, runner, jevKicks } = setup({
+      imap: { port: imapWithMessages(3), mailboxes: ["INBOX"] },
+    });
+
+    await runner.runAllSources();
+
+    const statuses = db
+      .query<{ jev_status: string | null }, []>(
+        `SELECT en.jev_status FROM email_enrichments en
+         JOIN emails e ON e.id = en.email_id WHERE e.direction = 'inbound'`,
+      )
+      .all()
+      .map((row) => row.jev_status);
+    expect(statuses).toEqual(["pending", "pending", "pending"]);
+    expect(jevKicks()).toBe(1);
   });
 
   test("without IMAP configured there is no imap summary and no enrichment kick", async () => {

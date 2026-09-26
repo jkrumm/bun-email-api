@@ -1,5 +1,6 @@
 import type { EmailStats, EmailListItem } from "../../db/emails";
 import type { ImapMailboxHealth } from "../../db/imap-state";
+import type { JevQueueCounts } from "../../db/jev-queue";
 import type { JevComparison, SubmissionRecord } from "../../db/submissions";
 import { AdminLayout } from "../layout";
 import {
@@ -171,9 +172,19 @@ function ImapHealthTile({
   return <StatTile label="IMAP ingest" title={title} value={value} bar={bar} />;
 }
 
+function jevQueueBar({
+  pending,
+  failed,
+}: JevQueueCounts): "bad" | "warn" | undefined {
+  if (failed > 0) return "bad";
+  if (pending > 0) return "warn";
+  return undefined;
+}
+
 export function OverviewPage({
   stats,
   jevComparison,
+  jevQueue,
   needsAction,
   recentlyBlocked,
   lastSyncedAt,
@@ -184,6 +195,7 @@ export function OverviewPage({
 }: {
   stats: EmailStats;
   jevComparison: JevComparison;
+  jevQueue: JevQueueCounts;
   needsAction: EmailListItem[];
   recentlyBlocked: SubmissionRecord[];
   lastSyncedAt: string | null;
@@ -250,6 +262,12 @@ export function OverviewPage({
         {imapHealth.length > 0 ? (
           <ImapHealthTile health={imapHealth} now={now} />
         ) : null}
+        <StatTile
+          label="Jev queue"
+          value={`${formatNumber(jevQueue.pending)} pending`}
+          title={`${formatNumber(jevQueue.failed)} failed after all retries`}
+          bar={jevQueueBar(jevQueue)}
+        />
         <StatTile
           label="Median latency LLM / Jev"
           value={`${formatLatency(jevComparison.llmMedianLatencyMs)} / ${formatLatency(jevComparison.jevMedianLatencyMs)}`}

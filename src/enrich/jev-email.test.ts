@@ -46,7 +46,6 @@ describe("judgeEmailWithJev", () => {
       spamProbability: 0.04,
       category: "inquiry",
       categoryConfidence: 0.88,
-      error: null,
     });
     expect(calls).toHaveLength(1);
     const asked = calls[0]!.questions;
@@ -56,14 +55,13 @@ describe("judgeEmailWithJev", () => {
     ]);
   });
 
-  test("captures a failure as an error result instead of rejecting", async () => {
+  test("rejects when the call fails so the queue can retry", async () => {
     const { model } = fakeJevModel(() => {
       throw new Error("gateway 401");
     });
 
-    const outcome = await judgeEmailWithJev({ payload, config, model })!;
-
-    expect(outcome.spamProbability).toBeNull();
-    expect(outcome.error).toContain("401");
+    await expect(
+      judgeEmailWithJev({ payload, config, model })!,
+    ).rejects.toThrow("401");
   });
 });

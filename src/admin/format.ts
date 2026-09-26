@@ -210,3 +210,25 @@ export function imapTileValue(
     title,
   };
 }
+
+// One line for a Jev queue row that has no decision (yet): when it retries,
+// or why it gave up. Null once Jev is "done".
+export function formatJevQueueState(jev: {
+  status: "pending" | "done" | "failed";
+  attempts: number;
+  nextAttemptAt: string | null;
+  error: string | null;
+}): string | null {
+  if (jev.status === "done") return null;
+
+  if (jev.status === "failed") {
+    return `failed after ${jev.attempts} attempts: ${jev.error ?? "unknown error"}`;
+  }
+
+  const when = jev.nextAttemptAt
+    ? `next attempt ${formatLongDateTime(jev.nextAttemptAt)}`
+    : "queued";
+  return jev.attempts > 0
+    ? `pending · ${when} · last error: ${jev.error ?? "unknown error"}`
+    : `pending · ${when}`;
+}

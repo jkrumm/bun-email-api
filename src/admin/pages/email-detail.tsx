@@ -12,6 +12,7 @@ import {
 } from "../ui";
 import {
   formatBytes,
+  formatJevQueueState,
   formatListDateTime,
   formatLongDateTime,
   formatPercent,
@@ -28,8 +29,8 @@ function JevBlock({ jev }: { jev: JevEnrichment }) {
       <p className="card-title" style={{ marginTop: 12 }}>
         Jev (shadow)
       </p>
-      {jev.error !== null ? (
-        <p className="page-subtitle">Jev failed: {jev.error}</p>
+      {jev.status !== "done" ? (
+        <p className="page-subtitle">{formatJevQueueState(jev)}</p>
       ) : (
         <p>
           <span className="mono">

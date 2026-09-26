@@ -1,9 +1,9 @@
 import { classifySubmission, shouldSuppress } from "./classify";
-import { judgeSubmissionWithJev } from "./jev-judge";
+import { getJevConfig } from "../llm/jev";
+import { kickJevWorker } from "../jev/worker";
 import { submissionsRepo } from "../db";
 import type { ClassificationResult } from "./classify";
 import type {
-  JevSubmissionView,
   RecordSubmissionInput,
   SubmissionSource,
 } from "../db/submissions";
@@ -18,49 +18,8 @@ export const CLASSIFY_DECISION_DEADLINE_MS = 8_000;
 type RecordSubmission = typeof submissionsRepo.recordSubmission;
 
 type Persist = (
-  input: Omit<RecordSubmissionInput, "llmLatencyMs" | "jev">,
+  input: Omit<RecordSubmissionInput, "llmLatencyMs" | "jevPending">,
 ) => void;
-
-// Jev is shadow-only: it runs beside the classifier, never delays or changes
-// the decision, and is recorded whenever it lands. `snapshot()` is what has
-// landed so far (stored with the row); `attachLater()` covers a row written
-// before Jev answered. Every failure path is log-only.
-function trackJev({
-  start,
-  attach,
-}: {
-  start: () => Promise<JevSubmissionView> | null;
-  attach: typeof submissionsRepo.attachJev;
-}) {
-  let landed: JevSubmissionView | null = null;
-  let pending: Promise<JevSubmissionView> | null = null;
-
-  try {
-    pending = start();
-  } catch (error) {
-    console.error("Failed to start Jev verdict", { error });
-  }
-
-  pending
-    ?.then((outcome) => {
-      landed = outcome;
-    })
-    .catch((error) => {
-      console.error("Jev verdict failed", { error });
-    });
-
-  return {
-    snapshot: () => landed,
-    attachLater(id: string): void {
-      if (!pending || landed) return;
-      pending
-        .then((outcome) => attach(id, outcome))
-        .catch((error) => {
-          console.error("Failed to record Jev verdict", { error });
-        });
-    },
-  };
-}
 
 export async function gateSubmission({
   source,
@@ -68,8 +27,8 @@ export async function gateSubmission({
   deliver,
   classify = classifySubmission,
   record = submissionsRepo.recordSubmission,
-  attachJev = submissionsRepo.attachJev,
-  jev = judgeSubmissionWithJev,
+  jevEnabled = () => getJevConfig() !== null,
+  kickJev = kickJevWorker,
   deadlineMs = CLASSIFY_DECISION_DEADLINE_MS,
 }: {
   source: SubmissionSource;
@@ -77,8 +36,8 @@ export async function gateSubmission({
   deliver: (opts: { subjectPrefix: string }) => Promise<void>;
   classify?: typeof classifySubmission;
   record?: RecordSubmission;
-  attachJev?: typeof submissionsRepo.attachJev;
-  jev?: typeof judgeSubmissionWithJev;
+  jevEnabled?: () => boolean;
+  kickJev?: () => void;
   deadlineMs?: number;
 }): Promise<{ delivered: boolean }> {
   const startedAt = Date.now();
@@ -88,22 +47,15 @@ export async function gateSubmission({
     return verdict;
   });
 
-  const shadow = trackJev({
-    start: () => jev({ source, submission }),
-    attach: attachJev,
-  });
-
   // A DB write here must never turn an already-delivered (or intentionally
   // suppressed) submission into a 500 for the caller — that would make a
   // Netlify/Cloudflare retry and send a duplicate email. Log and move on.
+  // Jev is shadow-only and never on this path: the row is queued for the Jev
+  // worker (src/jev/worker.ts), which retries until it has a verdict.
   const persist: Persist = (input) => {
     try {
-      const saved = record({
-        ...input,
-        llmLatencyMs,
-        jev: shadow.snapshot(),
-      });
-      shadow.attachLater(saved.id);
+      record({ ...input, llmLatencyMs, jevPending: jevEnabled() });
+      kickJev();
     } catch (error) {
       console.error("Failed to record submission", { error });
     }

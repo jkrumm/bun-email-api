@@ -1,9 +1,9 @@
-import type { JevSubmissionView, SubmissionSource } from "../db/submissions";
+import type { JevSubmissionResult, SubmissionSource } from "../db/submissions";
 import { decideShadow, type JevConfig } from "../llm/jev";
 
 // Jev's shadow verdict on a contact-form submission. Never authoritative:
-// src/spam/gate.ts records it beside the LLM classifier's verdict and never
-// lets it influence delivery.
+// the Jev worker (src/jev/worker.ts) records it beside the LLM classifier's
+// verdict and it never influences delivery.
 
 const SITES = {
   fpp: "Free-Planning-Poker.com — a free online planning-poker tool for agile teams. Legitimate senders are users writing feedback, bug reports, feature requests, or questions about the tool.",
@@ -24,7 +24,7 @@ export const JEV_VERDICT_QUESTION = {
   },
 } as const;
 
-// Never rejects; null when Jev is disabled (no API key).
+// Null when Jev is disabled (no API key); rejects when the call fails.
 export function judgeSubmissionWithJev({
   source,
   submission,
@@ -35,9 +35,8 @@ export function judgeSubmissionWithJev({
   submission: Record<string, string | number | null>;
   config?: JevConfig | null;
   model?: Parameters<typeof decideShadow>[0]["model"];
-}): Promise<JevSubmissionView> | null {
+}): Promise<JevSubmissionResult> | null {
   return decideShadow({
-    label: "submission",
     config,
     model,
     state: { sites: SITES, source, submission },
@@ -47,6 +46,5 @@ export function judgeSubmissionWithJev({
       confidence: verdict.confidence,
       probabilities: verdict.probabilities ?? null,
     }),
-    empty: { verdict: null, confidence: null, probabilities: null },
   });
 }
