@@ -1,4 +1,5 @@
 import { X509Certificate } from "node:crypto";
+import { isIP } from "node:net";
 import { ImapFlow, type ImapFlowOptions } from "imapflow";
 import { validDate } from "../utils/date";
 import { normalizePem } from "../utils/pem";
@@ -113,6 +114,10 @@ export function createImapflowPort(
       const client = createClient({
         host: config.host,
         port: config.port,
+        // imapflow passes `servername: false` for an IP host, which Bun's TLS
+        // upgrade rejects ("servername argument must be an string"). Bridge's
+        // cert is issued for localhost/127.0.0.1 and SNI is ignored anyway.
+        ...(isIP(config.host) ? { servername: "localhost" } : {}),
         secure: false,
         // Refuse to log in unless the connection was upgraded via STARTTLS.
         doSTARTTLS: true,

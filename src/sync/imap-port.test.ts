@@ -112,6 +112,19 @@ describe("createImapflowPort", () => {
     });
     // An error listener is attached so socket errors can't crash the process.
     expect(record.errorHandlers).toBe(1);
+    // A hostname is its own SNI; only IP hosts get an explicit servername.
+    expect(record.options).not.toHaveProperty("servername");
+  });
+
+  test("an IP host gets a string servername (Bun rejects imapflow's false)", async () => {
+    const { record, createClient } = createFakeClient();
+
+    await createImapflowPort(
+      { ...config, host: "100.64.0.1" },
+      { createClient },
+    ).connect();
+
+    expect(record.options).toMatchObject({ servername: "localhost" });
   });
 
   test("a failed connect closes the client and rethrows", async () => {
